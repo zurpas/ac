@@ -27,7 +27,7 @@ local hasPlayedInconcievable = false
 local hasPlayedUnfriggenbelievable = false
 
 function script.prepare(dt)
-    return ac.getCarState(1).speedKmh > 60
+    return ac.getCarState(0).speedKmh > 60
 end
 
 local timePassed = 0
@@ -51,6 +51,9 @@ local muteToggle = false
 local lastMuteKeyState = false
 local messageState = false
 
+local dragging = false
+local dragStartPos = vec2(0,0)
+
 function script.update(dt)
     local uiMoveKeyState = ac.isKeyDown(ac.KeyIndex.B)
     if uiMoveKeyState and lastUiMoveKeyState ~= uiMoveKeyState then
@@ -68,9 +71,18 @@ function script.update(dt)
     end
 
     if ui.mouseClicked(ui.MouseButton.Right) then
-        if uiMoveMode then
-            uiCustomPos = ui.mousePos()
-        end
+        dragging = true
+        dragStartPos = ui.mousePos()
+    end
+
+    if dragging and ui.mouseDown(ui.MouseButton.Right) then
+        local currentMousePos = ui.mousePos()
+        uiCustomPos = uiCustomPos + (currentMousePos - dragStartPos)
+        dragStartPos = currentMousePos
+    end
+
+    if not ui.mouseDown(ui.MouseButton.Right) then
+        dragging = false
     end
 
     local muteKeyState = ac.isKeyDown(ac.KeyIndex.M)
@@ -89,29 +101,33 @@ function script.update(dt)
     end
 
     if timePassed == 0 then
-        addMessage(ac.getDriverName(1), 0)
+        addMessage(ac.getDriverName(0), 0)
         addMessage('Made by Boon', 2)
-        addMessage('(Right-click to move the UI)', -1)
+        addMessage('(Right-click to drag the UI)', -1)
         addMessage('Driving Fast = More Points', -1)
         addMessage('We wish you a safe journey :)', -1)
     end
 
-    local player = ac.getCarState(1)
+    local player = ac.getCarState(0)
     if player.engineLifeLeft < 1 then
-        if totalScore > personalBest then
-            personalBest = totalScore
-            if muteToggle then
-                mediaPlayer:setSource(PBlink)
-                mediaPlayer:setVolume(.5)
-                mediaPlayer:play()
-            else
-                mediaPlayer:setSource(PBlink)
-                mediaPlayer:setVolume(0)
-                mediaPlayer:pause()
+        if totalScore > 0 then
+            local playerName = ac.getDriverName(0)
+            local scoreToSend = totalScore
+            if scoreToSend > personalBest then
+                personalBest = scoreToSend
+                if muteToggle then
+                    mediaPlayer:setSource(PBlink)
+                    mediaPlayer:setVolume(.5)
+                    mediaPlayer:play()
+                else
+                    mediaPlayer:setSource(PBlink)
+                    mediaPlayer:setVolume(0)
+                    mediaPlayer:pause()
+                end
+                ac.sendChatMessage('New PB: ' .. playerName .. ' ' .. scoreToSend)
             end
-            ac.sendChatMessage('Personal Best: ' .. personalBest)
+            ac.sendChatMessage('SCORE: ' .. playerName .. ' ' .. scoreToSend)
         end
-        ac.sendChatMessage('SCORE: ' .. totalScore)
         totalScore = 0
         comboMeter = 1
         hasPlayedSpree = false
@@ -148,20 +164,24 @@ function script.update(dt)
 
     if player.speedKmh < requiredSpeed then
         if dangerouslySlowTimer > 3 then
-            if totalScore > personalBest then
-                personalBest = totalScore
-                if muteToggle then
-                    mediaPlayer:setSource(PBlink)
-                    mediaPlayer:setVolume(.5)
-                    mediaPlayer:play()
-                else
-                    mediaPlayer:setSource(PBlink)
-                    mediaPlayer:setVolume(0)
-                    mediaPlayer:pause()
+            if totalScore > 0 then
+                local playerName = ac.getDriverName(0)
+                local scoreToSend = totalScore
+                if scoreToSend > personalBest then
+                    personalBest = scoreToSend
+                    if muteToggle then
+                        mediaPlayer:setSource(PBlink)
+                        mediaPlayer:setVolume(.5)
+                        mediaPlayer:play()
+                    else
+                        mediaPlayer:setSource(PBlink)
+                        mediaPlayer:setVolume(0)
+                        mediaPlayer:pause()
+                    end
+                    ac.sendChatMessage('New PB: ' .. playerName .. ' ' .. scoreToSend)
                 end
-                ac.sendChatMessage('Personal Best: ' .. personalBest)
+                ac.sendChatMessage('SCORE: ' .. playerName .. ' ' .. scoreToSend)
             end
-            ac.sendChatMessage('SCORE: ' .. totalScore)
             totalScore = 0
             comboMeter = 1
             hasPlayedSpree = false
@@ -190,9 +210,10 @@ function script.update(dt)
         dangerouslySlowTimer = 0
     end
 
-    if player.collidedWith == 0 then
-        if totalScore >= personalBest then
+    if player.collidedWith != -1 then
+        if totalScore > personalBest then
             personalBest = totalScore
+            local playerName = ac.getDriverName(0)
             if muteToggle then
                 mediaPlayer:setSource(PBlink)
                 mediaPlayer:setVolume(.5)
@@ -202,8 +223,10 @@ function script.update(dt)
                 mediaPlayer:setVolume(0)
                 mediaPlayer:pause()
             end
-            ac.sendChatMessage('Personal Best: ' .. personalBest)
+            ac.sendChatMessage('New PB: ' .. playerName .. ' ' .. totalScore)
         end
+        local playerName = ac.getDriverName(0)
+        ac.sendChatMessage('SCORE: ' .. playerName .. ' ' .. totalScore)
         comboMeter = 1
         totalScore = 0
         hasPlayedSpree = false
@@ -332,7 +355,7 @@ function script.update(dt)
         end
     end
 
-    for i = 2, ac.getSim().carsCount do
+    for i = 1, ac.getSim().carsCount - 1 do
         local car = ac.getCarState(i)
         local state = carsState[i]
 
@@ -466,7 +489,7 @@ function script.drawUI()
         local uiState = ac.getUiState()
         updateMessages(uiState.dt)
 
-        local speedRelative = math.saturate(math.floor(ac.getCarState(1).speedKmh) / requiredSpeed)
+        local speedRelative = math.saturate(math.floor(ac.getCarState(0).speedKmh) / requiredSpeed)
         speedWarning = math.applyLag(speedWarning, speedRelative < 1 and 1 or 0, 0.5, uiState.dt)
 
         local colorDark = rgbm(0.4, 0.4, 0.4, 1)
@@ -480,13 +503,29 @@ function script.drawUI()
             ui.drawLine(ref + vec2(0, -4), ref + vec2(0, 4), colorGrey, 1)
             ui.drawLine(ref + vec2(requiredSpeed, -4), ref + vec2(requiredSpeed, 4), colorGrey, 1)
 
-            local speed = math.min(ac.getCarState(1).speedKmh, 300)
+            local speed = math.min(ac.getCarState(0).speedKmh, 300)
             if speed > 1 then
                 ui.drawLine(ref + vec2(0, 0), ref + vec2(speed, 0), colorAccent, 4)
             end
         end
 
-        ui.beginTransparentWindow('overtakeScore', uiCustomPos, vec2(1400, 1400), true)
+        -- Handle UI dragging
+        if ui.mouseClicked(ui.MouseButton.Right) then
+            dragging = true
+            dragStartPos = ui.mousePos()
+        end
+
+        if dragging and ui.mouseDown(ui.MouseButton.Right) then
+            local currentMousePos = ui.mousePos()
+            uiCustomPos = uiCustomPos + (currentMousePos - dragStartPos)
+            dragStartPos = currentMousePos
+        end
+
+        if not ui.mouseDown(ui.MouseButton.Right) then
+            dragging = false
+        end
+
+        ui.beginTransparentWindow('overtakeScore', uiCustomPos, vec2(400, 300), true)
         ui.beginOutline()
 
         ui.pushStyleVar(ui.StyleVar.Alpha, 1 - speedWarning)
