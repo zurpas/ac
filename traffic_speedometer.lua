@@ -76,6 +76,17 @@ local COLOR_WARNING = rgbm(0.9, 0.5, 0, 1)
 local COLOR_DANGER = rgbm(0.9, 0.1, 0.1, 1)
 local COLOR_SAFE = rgbm(0.1, 0.8, 0.2, 1)
 
+-- Helper function for color lerping (since rgbm.lerprgb doesn't exist)
+local function lerpColor(c1, c2, t)
+    t = math.min(math.max(t, 0), 1)  -- Clamp t between 0 and 1
+    return rgbm(
+        c1.r + (c2.r - c1.r) * t,
+        c1.g + (c2.g - c1.g) * t,
+        c1.b + (c2.b - c1.b) * t,
+        c1.a + (c2.a - c1.a) * t
+    )
+end
+
 function script.prepare(dt)
     return true  -- Always run
 end
@@ -223,8 +234,8 @@ function script.drawUI()
     
     -- Apply warning pulse effect
     if collisionRisk > 0 then
-        borderColor = rgbm.lerprgb(COLOR_BORDER, COLOR_DANGER, warningPulse)
-        bgColor = rgbm.lerprgb(COLOR_BG, rgbm(0.2, 0.05, 0.05, 0.85), warningPulse)
+        borderColor = lerpColor(COLOR_BORDER, COLOR_DANGER, warningPulse)
+        bgColor = lerpColor(COLOR_BG, rgbm(0.2, 0.05, 0.05, 0.85), warningPulse)
     end
     
     -- Draw background
@@ -236,7 +247,7 @@ function script.drawUI()
     
     -- Title bar with drag handle
     local titleBarHeight = 25
-    local titleBarColor = rgbm.lerprgb(rgbm(0.15, 0.15, 0.2, 0.9), COLOR_DANGER, warningPulse)
+    local titleBarColor = lerpColor(rgbm(0.15, 0.15, 0.2, 0.9), COLOR_DANGER, warningPulse)
     ui.drawRectFilled(uiPos, vec2(uiPos.x + uiSize.x, uiPos.y + titleBarHeight), titleBarColor)
     
     -- Title text
@@ -333,7 +344,7 @@ function script.drawUI()
             ui.setCursor(vec2(uiPos.x + (uiSize.x / 2) - (warnWidth / 2), infoY + 85))
             
             -- Pulsing warning color
-            local warningColor = rgbm.lerprgb(COLOR_WARNING, COLOR_DANGER, warningPulse)
+            local warningColor = lerpColor(COLOR_WARNING, COLOR_DANGER, warningPulse)
             ui.textColored(warningText, warningColor)
             ui.popFont()
         end
