@@ -1,51 +1,40 @@
 --[[
-Overtake Challenge Utilities
+Overtake Challenge Utils for Assetto Corsa Traffic Server
 Version 1.0.0
 
-Utility functions for the Assetto Corsa Overtake Challenge
-This file contains helper functions to keep the main script cleaner.
+Utility functions for the overtake challenge script.
 ]]
 
 local utils = {}
 
--- Constants for physics calculations
-utils.GRAVITY = 9.81 -- m/s²
-
--- Format score as string with commas as thousand separators
-function utils.formatScore(score)
-    local formatted = tostring(score)
-    local k = #formatted % 3
-    
-    if k == 0 then k = 3 end
-    
-    local result = string.sub(formatted, 1, k)
-    
-    for i = k + 1, #formatted, 3 do
-        result = result .. "," .. string.sub(formatted, i, i + 2)
-    end
-    
-    return result
+-- Calculate distance between two positions
+function utils.distance(pos1, pos2)
+    return math.sqrt((pos1.x - pos2.x)^2 + (pos1.z - pos2.z)^2)
 end
 
--- Calculate relative speed between two cars (considering direction)
-function utils.getRelativeSpeed(car1, car2)
-    if not car1 or not car2 then
-        return 0
+-- Calculate relative speed in km/h
+function utils.relativeSpeed(car1, car2)
+    return math.abs(car1.speedKmh - car2.speedKmh)
+end
+
+-- Format time as MM:SS.mmm
+function utils.formatTime(seconds)
+    local minutes = math.floor(seconds / 60)
+    local secs = seconds % 60
+    return string.format("%02d:%05.2f", minutes, secs)
+end
+
+-- Format score with thousands separators
+function utils.formatScore(score)
+    local formatted = tostring(score)
+    local k
+    
+    while true do
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
+        if k == 0 then break end
     end
     
-    -- Get velocity vectors
-    local vel1 = car1.velocity
-    local vel2 = car2.velocity
-    
-    -- Calculate relative velocity magnitude
-    local relVelX = vel1.x - vel2.x
-    local relVelY = vel1.y - vel2.y
-    local relVelZ = vel1.z - vel2.z
-    
-    -- Convert to km/h
-    local relSpeed = math.sqrt(relVelX^2 + relVelY^2 + relVelZ^2) * 3.6
-    
-    return relSpeed
+    return formatted
 end
 
 -- Get the side of the car another car is on (left, right, front, behind)
@@ -54,8 +43,8 @@ function utils.getRelativeSide(carRef, carTarget)
         return "unknown"
     end
     
-    local refPos = carRef.worldPosition
-    local targetPos = carTarget.worldPosition
+    local refPos = carRef.position
+    local targetPos = carTarget.position
     
     -- Get reference car's forward and right vectors
     local forward = carRef.look
@@ -90,127 +79,65 @@ function utils.getRelativeSide(carRef, carTarget)
     end
 end
 
--- Calculate the G-forces a car is experiencing
-function utils.getGForces(car)
-    if not car then
-        return { lateral = 0, longitudinal = 0, vertical = 0 }
+-- Calculate speed multiplier based on car speed
+function utils.calculateSpeedMultiplier(car)
+    local speed = car.speedKmh
+    
+    if speed < 50 then
+        return 1.0
+    elseif speed < 80 then
+        return 1.2
+    elseif speed < 120 then
+        return 1.5
+    elseif speed < 180 then
+        return 2.0
+    else
+        return 3.0
     end
-    
-    local acceleration = car.acceleration -- in m/s²
-    
-    -- Convert to G (divide by standard gravity)
-    local gForces = {
-        lateral = acceleration.x / utils.GRAVITY,
-        longitudinal = acceleration.z / utils.GRAVITY,
-        vertical = acceleration.y / utils.GRAVITY
-    }
-    
-    return gForces
 end
 
--- Check if a car is within lane boundaries
-function utils.isInLane(car, laneWidth, laneOffset)
-    if not car then
-        return false
+-- Calculate proximity multiplier based on distance
+function utils.calculateProximityMultiplier(distance)
+    if distance > 3.0 then
+        return 1.0
+    elseif distance > 2.0 then
+        return 1.2
+    elseif distance > 1.5 then
+        return 1.5
+    elseif distance > 1.0 then
+        return 1.8
+    else
+        return 2.0
     end
-    
-    -- Default values if not provided
-    laneWidth = laneWidth or 3.5 -- meters
-    laneOffset = laneOffset or 0  -- center offset
-    
-    -- Get car's position relative to track
-    local trackPos = car.trackPosition
-    
-    -- Check if within lane boundaries
-    -- This is a simplified version - would need to be adapted to your track
-    if math.abs(trackPos.x - laneOffset) <= laneWidth / 2 then
-        return true
-    end
-    
-    return false
 end
 
--- Determine if a player is driving in the wrong direction
-function utils.isWrongWay(car)
-    if not car then
-        return false
-    end
-    
-    -- Get car's forward vector and track direction
-    local carForward = car.look
-    local trackDir = car.trackDirection
-    
-    -- Calculate dot product to determine alignment
-    local alignment = carForward.x * trackDir.x + carForward.z * trackDir.z
-    
-    -- If dot product is negative, car is going against track direction
-    return alignment < 0
-end
-
--- Calculate optimal racing line distance
-function utils.racingLineDistance(car)
-    if not car then
-        return 0
-    end
-    
-    -- This is a placeholder function - implement based on your track
-    -- In a real implementation, you would need track-specific racing line data
-    
-    -- For now, just return a simplified distance from track center
-    return math.abs(car.trackPosition.x)
-end
-
--- Simple chat color coding
-function utils.coloredText(text, r, g, b)
-    return string.format("\\c%02X%02X%02X%s\\c", 
-        math.floor(r * 255),
-        math.floor(g * 255),
-        math.floor(b * 255),
-        text
-    )
-end
-
--- Format time in MM:SS.MS format
-function utils.formatTime(timeInSeconds)
-    local minutes = math.floor(timeInSeconds / 60)
-    local seconds = timeInSeconds % 60
-    return string.format("%02d:%05.2f", minutes, seconds)
-end
-
--- Get car's current road surface type
-function utils.getSurfaceType(car)
-    if not car then
+-- Get lane name from lane number
+function utils.getLaneName(lane)
+    if lane == 1 then
+        return "left"
+    elseif lane == 2 then
+        return "middle"
+    elseif lane == 3 then
+        return "right"
+    else
         return "unknown"
     end
+end
+
+-- Check if car is on the road
+function utils.isOnRoad(car)
+    -- This is a simple implementation
+    -- For more accurate results, you would need track-specific data
+    return true
+end
+
+-- Calculate difficulty multiplier for scoring
+function utils.calculateDifficulty(speed, proximity)
+    -- Higher speed and closer proximity = higher difficulty = more points
+    local speedFactor = math.max(1.0, speed / 100)
+    local proximityFactor = math.max(1.0, 5.0 / proximity)
     
-    -- This is a simplified version - would need access to actual surface data
-    -- Check if all wheels are on the same surface type
-    local wheelTypes = {
-        car.wheels[0].surfaceType,
-        car.wheels[1].surfaceType,
-        car.wheels[2].surfaceType,
-        car.wheels[3].surfaceType
-    }
-    
-    -- If all wheels are on the same surface, return that
-    if wheelTypes[1] == wheelTypes[2] and wheelTypes[1] == wheelTypes[3] and wheelTypes[1] == wheelTypes[4] then
-        return wheelTypes[1]
-    end
-    
-    -- If some wheels are on different surfaces, prioritize most common
-    local counts = {}
-    local maxType = "unknown"
-    local maxCount = 0
-    
-    for _, surfaceType in ipairs(wheelTypes) do
-        counts[surfaceType] = (counts[surfaceType] or 0) + 1
-        if counts[surfaceType] > maxCount then
-            maxCount = counts[surfaceType]
-            maxType = surfaceType
-        end
-    end
-    
-    return maxType
+    return speedFactor * proximityFactor
 end
 
 return utils 
