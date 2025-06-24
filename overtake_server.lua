@@ -172,7 +172,7 @@ local function applyPenalty(carId, severity)
     end
     
     sendChatToPlayer(carId, message)
-}
+end
 
 -- Determine current lane (simplified - would need to be adapted to your track)
 local function getCurrentLane(car)
