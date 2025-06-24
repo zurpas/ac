@@ -26,7 +26,13 @@ local state = {
     laneChangeCount = 0,
     lastLaneChange = 0,
     uiPosition = vec2(900, 70),
+    pbUiPosition = vec2(900, 320),
     uiMoving = false,
+    pbUiMoving = false,
+    uiDragging = false,
+    pbUiDragging = false,
+    dragOffset = vec2(0, 0),
+    pbDragOffset = vec2(0, 0),
     uiHidden = false,
     messages = {},
     animations = {},
@@ -56,16 +62,16 @@ local mediaPlayers = {
 
 -- UI components
 local ui_components = {
-    mainPanel = {width = 380, height = 240},
-    scorePanel = {width = 360, height = 120},
-    multiplierPanel = {width = 360, height = 100},
-    messageArea = {width = 360, height = 200},
+    mainPanel = {width = 320, height = 90},
+    scorePanel = {width = 320, height = 50},
+    pbPanel = {width = 320, height = 80},
+    messageArea = {width = 320, height = 100},
 }
 
 -- Colors
 local colors = {
-    background = rgbm(0.1, 0.1, 0.1, 0.8),
-    backgroundAlt = rgbm(0.15, 0.15, 0.15, 0.9),
+    background = rgbm(0.1, 0.1, 0.1, 0.9),
+    backgroundAlt = rgbm(0.08, 0.08, 0.08, 0.95),
     accent = rgbm(0.8, 0.2, 0.3, 1.0),
     accentAlt = rgbm(0.3, 0.8, 0.2, 1.0),
     text = rgbm(1, 1, 1, 1.0),
@@ -77,6 +83,8 @@ local colors = {
     combo = rgbm(0.2, 0.6, 1.0, 1.0),
     laneChange = rgbm(1.0, 0.8, 0.2, 1.0),
     pb = rgbm(0.8, 0.8, 0.2, 1.0),
+    pbBackground = rgbm(0.6, 0.3, 0.8, 1.0), -- Purple for PB
+    timerBg = rgbm(0.3, 0.3, 0.3, 0.9),
 }
 
 -- Timeouts
@@ -168,8 +176,7 @@ function script.initialize()
     addMessage("Welcome to Traffic Rush!", colors.text)
     addMessage("Maintain speed above " .. config.minimumSpeed .. " km/h", colors.warning)
     addMessage("Change lanes often for bonus points!", colors.accentAlt)
-    addMessage("Right-click to move UI", colors.textDim)
-    addMessage("Press M to toggle UI movement", colors.textDim)
+    addMessage("Click and drag to move UI", colors.textDim)
     
     -- Initialize demo values for testing
     state.personalBest = 175975
@@ -177,10 +184,34 @@ function script.initialize()
     ac.log("Traffic Rush initialized")
 end
 
+-- Handle dragging UI
+function handleUIDragging()
+    -- Main UI dragging
+    if state.uiDragging then
+        if ui.mouseDown(ui.MouseButton.Left) then
+            state.uiPosition = ui.mousePos() - state.dragOffset
+        else
+            state.uiDragging = false
+        end
+    end
+    
+    -- PB UI dragging
+    if state.pbUiDragging then
+        if ui.mouseDown(ui.MouseButton.Left) then
+            state.pbUiPosition = ui.mousePos() - state.pbDragOffset
+        else
+            state.pbUiDragging = false
+        end
+    end
+end
+
 -- Update game state
 function script.update(dt)
     local player = ac.getCarState(1)
     local sim = ac.getSim()
+    
+    -- Handle UI dragging
+    handleUIDragging()
     
     -- Initialize car states if needed
     while sim.carsCount > #carsState do
@@ -192,15 +223,11 @@ function script.update(dt)
     speedMessageTimer = speedMessageTimer + dt
     mackMessageTimer = mackMessageTimer + dt
     
-    -- Handle UI movement
-    if ui.mouseClicked(ui.MouseButton.Right) and state.uiMoving then
-        state.uiPosition = ui.mousePos()
-    end
-    
     -- Toggle UI movement mode
     if ac.isKeyDown(ac.KeyIndex.M) then
         if not state.keyPressed then
             state.uiMoving = not state.uiMoving
+            state.pbUiMoving = not state.pbUiMoving
             addMessage(state.uiMoving and "UI Move Mode Enabled" or "UI Move Mode Disabled", colors.textDim)
             state.keyPressed = true
         end
@@ -524,159 +551,173 @@ function script.drawUI()
     local uiState = ac.getUiState()
     updateTimeouts(uiState.dt)
     
-    -- Begin main window
-    ui.beginTransparentWindow("trafficScoreUI", state.uiPosition, vec2(ui_components.mainPanel.width, ui_components.mainPanel.height), true)
+    -- Display messages panel separately
+    drawMessagesPanel(vec2(10, 200))
     
-    -- Draw top bar with multipliers
-    ui.pushStyleColor(ui.StyleColor.WindowBg, colors.background)
-    ui.pushStyleColor(ui.StyleColor.Border, colors.accent)
+    -- Draw main UI panel
+    drawMainPanel()
     
-    -- Draw the main header
-    drawMultiplierHeader()
-    
-    ui.offsetCursorY(5)
-    
-    -- Draw current score
-    drawScorePanel()
-    
-    -- Draw lives
-    drawLivesPanel()
-    
-    -- Draw messages
-    drawMessages()
+    -- Draw PB panel
+    drawPBPanel()
     
     -- Draw animations
     drawAnimations()
-    
-    ui.popStyleColor(2)
-    ui.endTransparentWindow()
-    
-    -- Draw rank/PB window
-    ui.beginTransparentWindow("trafficRankUI", state.uiPosition + vec2(0, ui_components.mainPanel.height + 10), vec2(ui_components.mainPanel.width, 60), true)
-    
-    ui.pushStyleColor(ui.StyleColor.WindowBg, colors.background)
-    ui.pushStyleColor(ui.StyleColor.Border, colors.pb)
-    
-    drawPBPanel()
-    
-    ui.popStyleColor(2)
-    ui.endTransparentWindow()
 end
 
--- Draw multiplier header
-function drawMultiplierHeader()
-    local headerHeight = 40
+-- Draw main panel with score and multipliers
+function drawMainPanel()
+    -- Define the panel dimensions
+    local width = ui_components.mainPanel.width
+    local height = ui_components.mainPanel.height
     
-    -- Background
-    ui.drawRectFilled(vec2(0, 0), vec2(ui_components.mainPanel.width, headerHeight), colors.backgroundAlt, 4)
+    -- Begin main window with transparent background
+    ui.beginTransparentWindow("trafficScoreUI", state.uiPosition, vec2(width, height), true)
     
-    -- Draw each multiplier box
-    local boxWidth = 80
-    local boxSpacing = 10
-    local startX = 10
+    -- Handle mouse interactions for dragging
+    if ui.isWindowHovered() and ui.mouseClicked(ui.MouseButton.Left) and (state.uiMoving or ui.keyDown(ui.KeyIndex.Shift)) then
+        state.uiDragging = true
+        state.dragOffset = ui.mousePos() - state.uiPosition
+    end
+    
+    -- Draw the angular background shape
+    local points = {
+        vec2(0, 0),                  -- Top-left
+        vec2(width, 0),              -- Top-right
+        vec2(width - 15, height),    -- Bottom-right (inset)
+        vec2(0, height)              -- Bottom-left
+    }
+    
+    -- Draw filled background
+    ui.drawPolygon(points, colors.background)
+    
+    -- Draw multiplier boxes
+    local boxWidth = 65
+    local boxHeight = 40
+    local boxGap = 5
+    local startX = 5
+    local startY = 5
     
     -- Speed multiplier
-    drawMultiplierBox(vec2(startX, 5), boxWidth, 30, "Speed", state.multipliers.speed, colors.speed)
+    drawMultiplierBox(vec2(startX, startY), boxWidth, boxHeight, "Speed", string.format("%.1fX", state.multipliers.speed), colors.backgroundAlt)
     
     -- Proximity multiplier
-    drawMultiplierBox(vec2(startX + boxWidth + boxSpacing, 5), boxWidth, 30, "Proximity", state.multipliers.proximity, colors.proximity)
+    drawMultiplierBox(vec2(startX + boxWidth + boxGap, startY), boxWidth, boxHeight, "Proximity", string.format("%.1fX", state.multipliers.proximity), colors.backgroundAlt)
     
     -- Combo multiplier
-    drawMultiplierBox(vec2(startX + (boxWidth + boxSpacing) * 2, 5), boxWidth, 30, "Combo", state.multipliers.combo, colors.combo)
+    drawMultiplierBox(vec2(startX + (boxWidth + boxGap) * 2, startY), boxWidth, boxHeight, "Combo", string.format("%.1fX", state.multipliers.combo), colors.backgroundAlt)
     
     -- Total multiplier
     local totalMultiplier = state.multipliers.speed * state.multipliers.proximity * state.multipliers.combo * state.multipliers.laneChange
-    ui.drawRectFilled(vec2(startX + (boxWidth + boxSpacing) * 3, 5), vec2(startX + (boxWidth + boxSpacing) * 4 - boxSpacing, 35), colors.accent, 4)
-    
-    -- Draw total multiplier text
-    ui.setCursor(vec2(startX + (boxWidth + boxSpacing) * 3 + 5, 8))
-    ui.pushFont(ui.Font.Small)
+    local totalBoxWidth = 85
+    ui.drawRectFilled(vec2(startX + (boxWidth + boxGap) * 3, startY), vec2(startX + (boxWidth + boxGap) * 3 + totalBoxWidth, startY + boxHeight), colors.backgroundAlt, 0)
+    ui.setCursor(vec2(startX + (boxWidth + boxGap) * 3 + 15, startY + 12))
+    ui.pushFont(ui.Font.Title)
     ui.text(string.format("%.1fX", totalMultiplier))
     ui.popFont()
     
-    -- Current time
-    ui.setCursor(vec2(startX + (boxWidth + boxSpacing) * 3 + 40, 8))
+    -- Draw timer
+    ui.setCursor(vec2(width - 70, startY + boxHeight + 5))
     ui.pushFont(ui.Font.Small)
-    ui.text(string.format("%02d:%02d", math.floor(timePassed / 60), math.floor(timePassed % 60)))
+    ui.textColored(string.format("%02d:%02d", math.floor(timePassed / 60), math.floor(timePassed % 60)), colors.textDim)
     ui.popFont()
-end
+    
+    -- Draw score
+    ui.setCursor(vec2(startX + 10, startY + boxHeight + 5))
+    ui.pushFont(ui.Font.Title)
+    if state.isPB then
+        ui.textColored(string.format("%d PTS", state.currentScore), colors.pb)
+    else
+        ui.text(string.format("%d PTS", state.currentScore))
+    end
+    ui.popFont()
+    
+    ui.endTransparentWindow()
+}
+
+-- Draw PB panel
+function drawPBPanel()
+    -- Define the panel dimensions
+    local width = ui_components.pbPanel.width
+    local height = ui_components.pbPanel.height
+    
+    -- Begin PB window with transparent background
+    ui.beginTransparentWindow("trafficPBUI", state.pbUiPosition, vec2(width, height), true)
+    
+    -- Handle mouse interactions for dragging PB panel
+    if ui.isWindowHovered() and ui.mouseClicked(ui.MouseButton.Left) and (state.pbUiMoving or ui.keyDown(ui.KeyIndex.Shift)) then
+        state.pbUiDragging = true
+        state.pbDragOffset = ui.mousePos() - state.pbUiPosition
+    end
+    
+    -- Draw the angular background shape for PB panel
+    local points = {
+        vec2(0, 0),                  -- Top-left
+        vec2(width, 0),              -- Top-right
+        vec2(width - 20, height),    -- Bottom-right (inset)
+        vec2(0, height)              -- Bottom-left
+    }
+    
+    -- Draw filled background
+    ui.drawPolygon(points, colors.background)
+    
+    -- Draw PB label and value
+    ui.setCursor(vec2(15, 15))
+    ui.pushFont(ui.Font.Normal)
+    ui.text("PB")
+    ui.popFont()
+    
+    ui.setCursor(vec2(60, 12))
+    ui.pushFont(ui.Font.Title)
+    ui.textColored(string.format("%d", state.personalBest), colors.pb)
+    ui.popFont()
+    
+    -- Draw rank section with darker background
+    local rankPoints = {
+        vec2(width - 120, 0),             -- Top-left
+        vec2(width, 0),                   -- Top-right
+        vec2(width - 20, height),         -- Bottom-right
+        vec2(width - 140, height)         -- Bottom-left
+    }
+    ui.drawPolygon(rankPoints, colors.backgroundAlt)
+    
+    -- Draw rank
+    ui.setCursor(vec2(width - 110, 15))
+    ui.pushFont(ui.Font.Normal)
+    ui.text("#0 PLACE")
+    ui.popFont()
+    
+    ui.endTransparentWindow()
+}
 
 -- Draw multiplier box
-function drawMultiplierBox(pos, width, height, label, value, color)
-    ui.drawRectFilled(pos, pos + vec2(width, height), color, 4)
+function drawMultiplierBox(pos, width, height, label, value, bgColor)
+    -- Draw background
+    ui.drawRectFilled(pos, pos + vec2(width, height), bgColor, 0)
     
-    ui.setCursor(pos + vec2(5, 2))
+    -- Draw label
+    ui.setCursor(pos + vec2(width/2 - 20, 5))
     ui.pushFont(ui.Font.Small)
     ui.text(label)
+    ui.popFont()
     
-    ui.setCursor(pos + vec2(5, 15))
+    -- Draw value
+    ui.setCursor(pos + vec2(width/2 - 15, 20))
     ui.pushFont(ui.Font.Normal)
-    ui.text(string.format("%.1fX", value))
+    ui.text(value)
     ui.popFont()
-end
+}
 
--- Draw score panel
-function drawScorePanel()
-    local panelHeight = 80
+-- Draw messages panel
+function drawMessagesPanel(position)
+    if #state.messages == 0 then return end
     
-    -- Background
-    ui.drawRectFilled(vec2(10, ui.getCursorY()), vec2(ui_components.scorePanel.width, ui.getCursorY() + panelHeight), colors.backgroundAlt, 4)
+    local width = 300
+    local height = 25 * math.min(5, #state.messages)
     
-    -- Score label
-    ui.setCursor(vec2(20, ui.getCursorY() + 10))
-    ui.pushFont(ui.Font.Normal)
-    ui.text("SCORE")
-    ui.popFont()
+    ui.beginTransparentWindow("trafficMessagesUI", position, vec2(width, height), true)
     
-    -- Current score with animated scale if it's a new PB
-    ui.setCursor(vec2(20, ui.getCursorY() + 5))
-    ui.pushFont(ui.Font.Huge)
-    
-    -- Apply animation if it's a new personal best
-    if state.isPB then
-        local pulseFactor = 1.0 + math.sin(timePassed * 10) * 0.1
-        ui.pushStyleVar(ui.StyleVar.Alpha, 0.8 + math.sin(timePassed * 5) * 0.2)
-        ui.textColored(string.format("%d", state.currentScore), colors.pb)
-        ui.popStyleVar()
-    else
-        ui.text(string.format("%d", state.currentScore))
-    end
-    ui.popFont()
-    
-    -- Lane bonus info
-    ui.setCursor(vec2(20, ui.getCursorY() + 5))
-    ui.pushFont(ui.Font.Small)
-    ui.textColored(string.format("Lanes Used: %d/4 (%.1fX bonus)", state.lanesUsed, state.multipliers.laneChange), colors.laneChange)
-    ui.popFont()
-end
-
--- Draw lives panel
-function drawLivesPanel()
-    local lifeSize = 20
-    local spacing = 5
-    
-    ui.setCursor(vec2(ui_components.mainPanel.width - (lifeSize + spacing) * config.maxLives - spacing, 50))
-    
-    -- Lives label
-    ui.pushFont(ui.Font.Small)
-    ui.setCursor(vec2(ui_components.mainPanel.width - (lifeSize + spacing) * config.maxLives - spacing - 40, 50))
-    ui.text("LIVES")
-    ui.popFont()
-    
-    -- Draw life icons
-    for i = 1, config.maxLives do
-        local pos = vec2(ui_components.mainPanel.width - (lifeSize + spacing) * (config.maxLives - i + 1), 50)
-        local lifeColor = i <= state.livesRemaining and colors.accentAlt or colors.textDim
-        
-        ui.drawRectFilled(pos, pos + vec2(lifeSize, lifeSize), lifeColor, 4)
-    end
-end
-
--- Draw messages
-function drawMessages()
-    ui.setCursor(vec2(10, 160))
-    
-    for i = 1, #state.messages do
+    for i = #state.messages, 1, -1 do
+        local idx = #state.messages - i + 1
         local msg = state.messages[i]
         local alpha = 1.0
         
@@ -693,12 +734,14 @@ function drawMessages()
         if alpha > 0 then
             local msgColor = rgbm(msg.color.r, msg.color.g, msg.color.b, msg.color.mult * alpha)
             ui.pushStyleVar(ui.StyleVar.Alpha, alpha)
+            ui.setCursor(vec2(10, 5 + (idx - 1) * 20))
             ui.textColored(msg.text, msgColor)
             ui.popStyleVar()
-            ui.offsetCursorY(5)
         end
     end
-end
+    
+    ui.endTransparentWindow()
+}
 
 -- Draw animations
 function drawAnimations()
@@ -714,53 +757,65 @@ function drawAnimations()
             alpha = (1.0 - progress) / 0.2
         end
         
-        -- Calculate position
-        local centerX = ui_components.mainPanel.width / 2
-        local centerY = ui_components.mainPanel.height / 2
-        local offsetY = math.sin(progress * math.pi) * 30
-        
-        -- Calculate scale
-        local scale = 1.0 + math.sin(progress * math.pi) * 0.3
-        
-        ui.pushFont(ui.Font.Huge)
-        local textSize = ui.measureText(anim.text)
-        local pos = vec2(centerX - textSize.x * scale / 2, centerY - offsetY - textSize.y * scale / 2)
-        
-        -- Draw shadow
-        ui.pushStyleVar(ui.StyleVar.Alpha, alpha * 0.5)
-        ui.setCursor(pos + vec2(2, 2))
-        ui.textColored(anim.text, rgbm(0, 0, 0, anim.color.mult))
-        ui.popStyleVar()
-        
-        -- Draw text
-        ui.pushStyleVar(ui.StyleVar.Alpha, alpha)
-        ui.setCursor(pos)
-        ui.textColored(anim.text, rgbm(anim.color.r, anim.color.g, anim.color.b, anim.color.mult))
-        ui.popStyleVar()
-        ui.popFont()
+        -- New PB animation
+        if anim.text == "NEW PB" then
+            -- Draw a special New PB panel with purple background
+            local width = 320
+            local height = 80
+            local pos = vec2(state.uiPosition.x, state.uiPosition.y + 100)
+            
+            -- Begin transparent window
+            ui.beginTransparentWindow("pbAnimationUI" .. i, pos, vec2(width, height), false)
+            
+            -- Draw the angular background shape with purple color
+            local points = {
+                vec2(0, 0),               -- Top-left
+                vec2(width, 0),           -- Top-right
+                vec2(width - 20, height), -- Bottom-right (inset)
+                vec2(0, height)           -- Bottom-left
+            }
+            
+            -- Draw filled background with pulsating alpha
+            local pulseAlpha = 0.8 + math.sin(progress * math.pi * 6) * 0.2
+            local bgColor = rgbm(colors.pbBackground.r, colors.pbBackground.g, colors.pbBackground.b, alpha * pulseAlpha)
+            ui.drawPolygon(points, bgColor)
+            
+            -- Draw text
+            ui.pushStyleVar(ui.StyleVar.Alpha, alpha)
+            ui.setCursor(vec2(width/2 - 60, height/2 - 15))
+            ui.pushFont(ui.Font.Huge)
+            ui.textColored("NEW PB", rgbm(1, 1, 1, 1))
+            ui.popFont()
+            ui.popStyleVar()
+            
+            ui.endTransparentWindow()
+        else
+            -- Standard animations
+            -- Calculate position in center of screen
+            local screenSize = ui.getWindowSize()
+            local centerX = screenSize.x / 2
+            local centerY = screenSize.y / 2
+            local offsetY = math.sin(progress * math.pi) * 30
+            
+            -- Calculate scale
+            local scale = 1.0 + math.sin(progress * math.pi) * 0.3
+            
+            ui.pushFont(ui.Font.Huge)
+            local textSize = ui.measureText(anim.text)
+            local pos = vec2(centerX - textSize.x * scale / 2, centerY - offsetY - textSize.y * scale / 2)
+            
+            -- Draw shadow
+            ui.pushStyleVar(ui.StyleVar.Alpha, alpha * 0.5)
+            ui.setCursor(pos + vec2(2, 2))
+            ui.textColored(anim.text, rgbm(0, 0, 0, anim.color.mult))
+            ui.popStyleVar()
+            
+            -- Draw text
+            ui.pushStyleVar(ui.StyleVar.Alpha, alpha)
+            ui.setCursor(pos)
+            ui.textColored(anim.text, rgbm(anim.color.r, anim.color.g, anim.color.b, anim.color.mult))
+            ui.popStyleVar()
+            ui.popFont()
+        end
     end
-end
-
--- Draw PB panel
-function drawPBPanel()
-    -- Background
-    ui.drawRectFilled(vec2(0, 0), vec2(ui_components.mainPanel.width, 60), colors.backgroundAlt, 4)
-    
-    -- PB label
-    ui.setCursor(vec2(10, 10))
-    ui.pushFont(ui.Font.Normal)
-    ui.text("PB")
-    ui.popFont()
-    
-    -- PB score
-    ui.setCursor(vec2(50, 10))
-    ui.pushFont(ui.Font.Title)
-    ui.textColored(string.format("%d", state.personalBest), colors.pb)
-    ui.popFont()
-    
-    -- Rank label
-    ui.setCursor(vec2(ui_components.mainPanel.width - 100, 10))
-    ui.pushFont(ui.Font.Normal)
-    ui.text("#0 PLACE")
-    ui.popFont()
 end 
