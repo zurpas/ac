@@ -37,7 +37,7 @@ local state = {
     messages = {},
     animations = {},
     isPB = false,
-    timeInLanes = {0, 0, 0, 0},
+    timeInLanes = {false, false, false, false},
     lanesUsed = 1,
     dangerouslySlowTimer = 0,
     muteSound = false,
@@ -178,8 +178,15 @@ function script.initialize()
     addMessage("Change lanes often for bonus points!", colors.accentAlt)
     addMessage("Click and drag to move UI", colors.textDim)
     
+    -- Reset timeInLanes array
+    state.timeInLanes = {false, false, false, false}
+    
     -- Initialize demo values for testing
     state.personalBest = 175975
+    
+    -- Initialize carsState array
+    carsState = {}
+    trafficCars = {}
     
     ac.log("Traffic Rush initialized")
 end
@@ -459,7 +466,7 @@ function script.update(dt)
         currentLane = 4
     end
     
-    if currentLane > 0 and not state.timeInLanes[currentLane] then
+    if currentLane > 0 and currentLane <= 4 and not state.timeInLanes[currentLane] then
         state.timeInLanes[currentLane] = true
         
         -- Count lanes used
@@ -818,4 +825,4 @@ function drawAnimations()
             ui.popFont()
         end
     end
-end 
+end
