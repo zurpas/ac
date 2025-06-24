@@ -1,29 +1,14 @@
--- Traffic Server UI App for Assetto Corsa with CSP
--- Modern draggable UI with scoring system for traffic server
+-- Traffic Server Script for Assetto Corsa with CSP
+-- Modern UI with moveable interface for traffic scoring system
 
--- App configuration
-local appConfig = {
-    name = "Traffic Master",
-    version = "1.0.0",
-    author = "Traffic Server",
-    windowSize = vec2(380, 520),
-    windowPos = vec2(50, 50)
-}
+-- Import required libraries
+local ui = require('shared/ui')
+local sim = ac.getSim()
 
--- UI State
-local uiState = {
-    windowPos = appConfig.windowPos,
-    windowSize = appConfig.windowSize,
-    isDragging = false,
-    dragOffset = vec2(0, 0),
-    isVisible = true,
-    opacity = 0.95
-}
-
--- Game State
-local gameState = {
+-- Global variables for the traffic system
+local trafficData = {
+    personalBest = 0,
     currentScore = 0,
-    personalBest = 12500,
     lives = 3,
     maxLives = 3,
     
@@ -34,439 +19,417 @@ local gameState = {
     laneChangeMultiplier = 1.0,
     
     -- Tracking variables
-    lastSpeed = 0,
-    lastPosition = vec3(0, 0, 0),
-    lanesUsed = {},
-    totalLaneChanges = 0,
-    nearMissCount = 0,
-    proximityTime = 0,
-    
-    -- Damage/collision tracking
+    laneChanges = 0,
+    uniqueLanesUsed = {},
+    lastLaneChangeTime = 0,
     collisionCount = 0,
-    lastCollisionTime = 0,
     
-    -- Session stats
-    sessionTime = 0,
-    totalDistance = 0
+    -- UI State
+    uiVisible = true,
+    uiPosition = vec2(100, 100),
+    uiSize = vec2(350, 450),
+    isDragging = false,
+    dragOffset = vec2(0, 0)
 }
 
--- Colors and styling
+-- Color scheme for modern UI
 local colors = {
-    background = rgbm(0.08, 0.08, 0.12, uiState.opacity),
-    headerBg = rgbm(0.12, 0.12, 0.18, 1),
-    accent = rgbm(0.2, 0.8, 1, 1),        -- Cyan
-    success = rgbm(0.2, 0.8, 0.2, 1),     -- Green
-    warning = rgbm(1, 0.8, 0.2, 1),       -- Yellow
-    danger = rgbm(1, 0.3, 0.3, 1),        -- Red
-    text = rgbm(0.9, 0.9, 0.9, 1),
-    textDim = rgbm(0.6, 0.6, 0.6, 1),
-    border = rgbm(0.3, 0.3, 0.4, 1)
+    background = rgbm(0.08, 0.08, 0.12, 0.95),
+    backgroundDark = rgbm(0.05, 0.05, 0.08, 0.98),
+    accent = rgbm(0.2, 0.8, 0.9, 1),
+    accentDark = rgbm(0.15, 0.6, 0.7, 1),
+    success = rgbm(0.2, 0.8, 0.4, 1),
+    warning = rgbm(1.0, 0.7, 0.2, 1),
+    danger = rgbm(0.9, 0.3, 0.3, 1),
+    text = rgbm(0.95, 0.95, 0.95, 1),
+    textDim = rgbm(0.7, 0.7, 0.7, 1)
 }
 
--- Timer for delayed operations
-local timers = {}
-
--- Initialize function
-function script.windowMain(dt)
-    -- Update session time
-    gameState.sessionTime = gameState.sessionTime + dt
-    
-    -- Update game logic
-    updateGameLogic(dt)
-    
-    -- Update multipliers
-    updateMultipliers(dt)
-    
-    -- Calculate score
-    calculateScore(dt)
-    
-    -- Check for collisions (simulated)
-    checkCollisions()
-    
-    -- Update timers
-    updateTimers(dt)
-    
-    -- Draw UI if visible
-    if uiState.isVisible then
-        drawMainUI()
-    end
+-- Initialize the script
+function script.prepare(dt)
+    -- Reset data when script loads
+    trafficData.currentScore = 0
+    trafficData.lives = trafficData.maxLives
+    trafficData.collisionCount = 0
+    trafficData.uniqueLanesUsed = {}
 end
 
--- Game logic updates
-function updateGameLogic(dt)
+-- Main update function called every frame
+function script.update(dt)
+    updateTrafficLogic(dt)
+    calculateMultipliers(dt)
+    updateScore(dt)
+end
+
+-- Update traffic logic and detection
+function updateTrafficLogic(dt)
+    local car = ac.getCar(0) -- Player car
+    if not car then return end
+    
+    -- Detect lane changes (simplified - you'd need proper lane detection)
+    local currentLane = math.floor(car.position.x / 3.5) -- Rough lane calculation
+    if trafficData.lastLane and trafficData.lastLane ~= currentLane then
+        trafficData.laneChanges = trafficData.laneChanges + 1
+        trafficData.uniqueLanesUsed[currentLane] = true
+        trafficData.lastLaneChangeTime = sim.time
+    end
+    trafficData.lastLane = currentLane
+    
+    -- Check for collisions/contacts
+    checkCollisions()
+end
+
+-- Calculate scoring multipliers
+function calculateMultipliers(dt)
     local car = ac.getCar(0)
     if not car then return end
     
-    -- Update distance
-    local currentPos = car.position
-    if gameState.lastPosition.x ~= 0 then
-        local distance = math.distance(currentPos, gameState.lastPosition)
-        gameState.totalDistance = gameState.totalDistance + distance
-    end
-    gameState.lastPosition = currentPos
-    
-    -- Track speed
-    gameState.lastSpeed = car.speedKmh
-    
-    -- Track lane usage (simplified - would need proper lane detection)
-    local laneId = math.floor(currentPos.x / 3.5) -- Approximate lane width
-    if not gameState.lanesUsed[laneId] then
-        gameState.lanesUsed[laneId] = true
-        gameState.totalLaneChanges = gameState.totalLaneChanges + 1
-    end
-end
-
--- Update multipliers based on game conditions
-function updateMultipliers(dt)
     -- Speed multiplier (higher speed = higher multiplier)
-    local speed = gameState.lastSpeed
-    if speed > 100 then
-        gameState.speedMultiplier = math.min(2.0, 1.0 + (speed - 100) / 200)
-    else
-        gameState.speedMultiplier = math.max(0.5, speed / 100)
+    local speedKmh = car.speedKmh
+    trafficData.speedMultiplier = math.max(0.1, math.min(3.0, speedKmh / 100))
+    
+    -- Proximity multiplier (closer to other cars = higher multiplier)
+    trafficData.proximityMultiplier = calculateProximityMultiplier()
+    
+    -- Near miss multiplier (recent close calls)
+    trafficData.nearMissMultiplier = calculateNearMissMultiplier()
+    
+    -- Lane change multiplier (using 3+ lanes gives bonus)
+    local uniqueLaneCount = 0
+    for _ in pairs(trafficData.uniqueLanesUsed) do
+        uniqueLaneCount = uniqueLaneCount + 1
     end
-    
-    -- Proximity multiplier (simplified - would need proper car detection)
-    gameState.proximityMultiplier = 1.0 + math.sin(gameState.sessionTime) * 0.3 + 0.3
-    
-    -- Near miss multiplier
-    gameState.nearMissMultiplier = 1.0 + (gameState.nearMissCount * 0.1)
-    
-    -- Lane change multiplier
-    local uniqueLanes = 0
-    for _ in pairs(gameState.lanesUsed) do
-        uniqueLanes = uniqueLanes + 1
-    end
-    
-    if uniqueLanes >= 3 then
-        gameState.laneChangeMultiplier = 2.0
-    elseif uniqueLanes >= 2 then
-        gameState.laneChangeMultiplier = 1.5
-    else
-        gameState.laneChangeMultiplier = 1.0
-    end
-    
-    -- Simulate near misses for demo
-    if math.random() < 0.001 then
-        gameState.nearMissCount = gameState.nearMissCount + 1
-    end
+    trafficData.laneChangeMultiplier = uniqueLaneCount >= 3 and 2.0 or 1.0
 end
 
--- Calculate current score
-function calculateScore(dt)
-    local basePoints = gameState.lastSpeed * dt * 0.1
-    local totalMultiplier = gameState.speedMultiplier * 
-                          gameState.proximityMultiplier * 
-                          gameState.nearMissMultiplier * 
-                          gameState.laneChangeMultiplier
+-- Calculate proximity to other cars
+function calculateProximityMultiplier()
+    local minDistance = 999
+    local playerCar = ac.getCar(0)
+    if not playerCar then return 1.0 end
     
-    gameState.currentScore = gameState.currentScore + (basePoints * totalMultiplier)
+    for i = 1, sim.carsCount - 1 do
+        local car = ac.getCar(i)
+        if car then
+            local distance = playerCar.position:distance(car.position)
+            minDistance = math.min(minDistance, distance)
+        end
+    end
+    
+    -- Closer cars give higher multiplier
+    if minDistance < 5 then return 2.5
+    elseif minDistance < 10 then return 2.0
+    elseif minDistance < 20 then return 1.5
+    else return 1.0 end
+end
+
+-- Calculate near miss multiplier
+function calculateNearMissMultiplier()
+    -- This would need proper collision detection implementation
+    return 1.0 -- Placeholder
+end
+
+-- Update the current score
+function updateScore(dt)
+    if trafficData.lives <= 0 then return end
+    
+    local basePoints = 10 * dt -- Base points per second
+    local totalMultiplier = trafficData.speedMultiplier * 
+                           trafficData.proximityMultiplier * 
+                           trafficData.nearMissMultiplier * 
+                           trafficData.laneChangeMultiplier
+    
+    trafficData.currentScore = trafficData.currentScore + (basePoints * totalMultiplier)
     
     -- Update personal best
-    if gameState.currentScore > gameState.personalBest then
-        gameState.personalBest = gameState.currentScore
+    if trafficData.currentScore > trafficData.personalBest then
+        trafficData.personalBest = trafficData.currentScore
     end
 end
 
--- Check for collisions and handle lives
+-- Check for collisions and handle life system
 function checkCollisions()
-    -- Simulate random collisions for demonstration
-    if math.random() < 0.0001 then
-        handleCollision()
-    end
-end
-
--- Handle collision logic
-function handleCollision()
-    gameState.collisionCount = gameState.collisionCount + 1
-    gameState.lastCollisionTime = gameState.sessionTime
+    -- This would need proper collision detection
+    -- For now, this is a placeholder
+    local collision = false -- You'd implement actual collision detection here
     
-    if gameState.collisionCount == 1 then
-        -- First collision: lose 5% of points
-        gameState.currentScore = gameState.currentScore * 0.95
-        gameState.lives = gameState.lives - 1
-    elseif gameState.collisionCount == 2 then
-        -- Second collision: lose 15% of points
-        gameState.currentScore = gameState.currentScore * 0.85
-        gameState.lives = gameState.lives - 1
-    else
-        -- Third collision: reset score and lives
-        gameState.currentScore = 0
-        gameState.lives = 0
-        gameState.collisionCount = 0
-        -- Reset lives after a few seconds
-        addTimer(3.0, function()
-            gameState.lives = gameState.maxLives
-        end)
+    if collision then
+        trafficData.collisionCount = trafficData.collisionCount + 1
+        
+        if trafficData.collisionCount == 1 then
+            -- First collision: lose 5% of points
+            trafficData.currentScore = trafficData.currentScore * 0.95
+            trafficData.lives = trafficData.lives - 1
+        elseif trafficData.collisionCount == 2 then
+            -- Second collision: lose 15% of points
+            trafficData.currentScore = trafficData.currentScore * 0.85
+            trafficData.lives = trafficData.lives - 1
+        elseif trafficData.collisionCount >= 3 then
+            -- Third collision: reset score and lives
+            trafficData.currentScore = 0
+            trafficData.lives = 0
+            trafficData.collisionCount = 0
+        end
     end
 end
 
--- Main UI drawing function
-function drawMainUI()
+-- Main UI rendering function
+function script.drawUI()
+    if not trafficData.uiVisible then return end
+    
     -- Handle window dragging
     handleWindowDragging()
     
-    -- Set window
-    ui.pushClipRect(uiState.windowPos, uiState.windowPos + uiState.windowSize)
+    -- Set window properties
+    ui.pushStyleVar(ui.StyleVar.WindowRounding, 12)
+    ui.pushStyleVar(ui.StyleVar.WindowPadding, vec2(16, 16))
+    ui.pushStyleColor(ui.Col.WindowBg, colors.backgroundDark)
+    ui.pushStyleColor(ui.Col.TitleBg, colors.accent)
+    ui.pushStyleColor(ui.Col.TitleBgActive, colors.accentDark)
     
-    -- Background
-    ui.drawRectFilled(uiState.windowPos, uiState.windowPos + uiState.windowSize, 
-                     colors.background, 8)
-    ui.drawRect(uiState.windowPos, uiState.windowPos + uiState.windowSize, 
-               colors.border, 8, 1)
+    -- Create the main window
+    ui.setNextWindowPos(trafficData.uiPosition, ui.Cond.FirstUseEver)
+    ui.setNextWindowSize(trafficData.uiSize, ui.Cond.FirstUseEver)
     
-    -- Draw sections
-    drawHeader()
-    drawScoreSection()
-    drawMultipliersSection()
-    drawLivesSection()
-    drawStatsSection()
+    if ui.begin('Traffic Server##TrafficUI', true, ui.WindowFlags.NoCollapse) then
+        trafficData.uiPosition = ui.getWindowPos()
+        trafficData.uiSize = ui.getWindowSize()
+        
+        drawMainInterface()
+    end
+    ui.endWindow()
     
-    ui.popClipRect()
+    -- Pop styles
+    ui.popStyleColor(3)
+    ui.popStyleVar(2)
 end
 
--- Draw header with title and drag area
-function drawHeader()
-    local headerRect = {
-        uiState.windowPos,
-        uiState.windowPos + vec2(uiState.windowSize.x, 40)
-    }
+-- Handle window dragging functionality
+function handleWindowDragging()
+    local mousePos = ui.mousePos()
+    local isMouseDown = ui.isMouseDown(ui.MouseButton.Left)
     
-    ui.drawRectFilled(headerRect[1], headerRect[2], colors.headerBg, 8)
+    if ui.isWindowHovered() and isMouseDown and not trafficData.isDragging then
+        trafficData.isDragging = true
+        trafficData.dragOffset = mousePos - trafficData.uiPosition
+    elseif not isMouseDown then
+        trafficData.isDragging = false
+    end
     
-    -- Title
+    if trafficData.isDragging then
+        trafficData.uiPosition = mousePos - trafficData.dragOffset
+    end
+end
+
+-- Draw the main interface elements
+function drawMainInterface()
+    -- Header with title
     ui.pushFont(ui.Font.Title)
-    ui.setCursor(headerRect[1] + vec2(15, 8))
-    ui.textColored("TRAFFIC MASTER", colors.accent)
+    ui.pushStyleColor(ui.Col.Text, colors.accent)
+    ui.text("🏁 TRAFFIC MASTER")
+    ui.popStyleColor()
     ui.popFont()
     
-    -- Version
-    ui.setCursor(headerRect[2] + vec2(-80, -30))
-    ui.pushFont(ui.Font.Small)
-    ui.textColored("v" .. appConfig.version, colors.textDim)
-    ui.popFont()
+    ui.separator()
+    ui.spacing()
+    
+    -- Score Section
+    drawScoreSection()
+    
+    ui.spacing()
+    ui.separator()
+    ui.spacing()
+    
+    -- Lives Section
+    drawLivesSection()
+    
+    ui.spacing()
+    ui.separator()
+    ui.spacing()
+    
+    -- Multipliers Section
+    drawMultipliersSection()
+    
+    ui.spacing()
+    ui.separator()
+    ui.spacing()
+    
+    -- Statistics Section
+    drawStatisticsSection()
+    
+    ui.spacing()
+    
+    -- Control buttons
+    drawControlButtons()
 end
 
--- Draw main score display
+-- Draw score information
 function drawScoreSection()
-    local startY = uiState.windowPos.y + 50
+    ui.pushFont(ui.Font.Small)
+    ui.pushStyleColor(ui.Col.Text, colors.textDim)
+    ui.text("SCORES")
+    ui.popStyleColor()
+    ui.popFont()
     
     -- Current Score
-    ui.setCursor(vec2(uiState.windowPos.x + 20, startY))
-    ui.pushFont(ui.Font.Small)
-    ui.textColored("CURRENT SCORE", colors.textDim)
-    ui.popFont()
-    
-    ui.setCursor(vec2(uiState.windowPos.x + 20, startY + 20))
-    ui.pushFont(ui.Font.Huge)
-    ui.textColored(string.format("%.0f", gameState.currentScore), colors.success)
+    ui.pushFont(ui.Font.Large)
+    ui.pushStyleColor(ui.Col.Text, colors.success)
+    ui.text(string.format("Current: %.0f", trafficData.currentScore))
+    ui.popStyleColor()
     ui.popFont()
     
     -- Personal Best
-    ui.setCursor(vec2(uiState.windowPos.x + 200, startY))
+    ui.pushStyleColor(ui.Col.Text, colors.warning)
+    ui.text(string.format("Personal Best: %.0f", trafficData.personalBest))
+    ui.popStyleColor()
+end
+
+-- Draw lives display
+function drawLivesSection()
     ui.pushFont(ui.Font.Small)
-    ui.textColored("PERSONAL BEST", colors.textDim)
+    ui.pushStyleColor(ui.Col.Text, colors.textDim)
+    ui.text("LIVES")
+    ui.popStyleColor()
     ui.popFont()
     
-    ui.setCursor(vec2(uiState.windowPos.x + 200, startY + 20))
-    ui.pushFont(ui.Font.Title)
-    local pbColor = gameState.currentScore >= gameState.personalBest and colors.accent or colors.text
-    ui.textColored(string.format("%.0f", gameState.personalBest), pbColor)
-    ui.popFont()
+    -- Lives display with hearts
+    local heartColor = trafficData.lives > 0 and colors.danger or colors.textDim
+    ui.pushStyleColor(ui.Col.Text, heartColor)
     
-    -- Progress bar
-    local progressY = startY + 65
-    local progressWidth = uiState.windowSize.x - 40
-    local progressHeight = 8
-    local progressPos = vec2(uiState.windowPos.x + 20, progressY)
-    
-    -- Background
-    ui.drawRectFilled(progressPos, progressPos + vec2(progressWidth, progressHeight), 
-                     colors.border, 4)
-    
-    -- Progress fill
-    local progress = math.min(1.0, gameState.currentScore / math.max(1, gameState.personalBest))
-    if progress > 0 then
-        ui.drawRectFilled(progressPos, 
-                         progressPos + vec2(progressWidth * progress, progressHeight), 
-                         colors.accent, 4)
+    local heartsText = ""
+    for i = 1, trafficData.maxLives do
+        if i <= trafficData.lives then
+            heartsText = heartsText .. "♥ "
+        else
+            heartsText = heartsText .. "♡ "
+        end
     end
+    
+    ui.pushFont(ui.Font.Large)
+    ui.text(heartsText)
+    ui.popFont()
+    ui.popStyleColor()
+    
+    -- Collision penalties info
+    ui.pushFont(ui.Font.Small)
+    ui.pushStyleColor(ui.Col.Text, colors.textDim)
+    ui.text("1st hit: -5% | 2nd hit: -15% | 3rd hit: Reset")
+    ui.popStyleColor()
+    ui.popFont()
 end
 
 -- Draw multipliers section
 function drawMultipliersSection()
-    local startY = uiState.windowPos.y + 140
-    
-    ui.setCursor(vec2(uiState.windowPos.x + 20, startY))
     ui.pushFont(ui.Font.Small)
-    ui.textColored("MULTIPLIERS", colors.textDim)
+    ui.pushStyleColor(ui.Col.Text, colors.textDim)
+    ui.text("MULTIPLIERS")
+    ui.popStyleColor()
     ui.popFont()
     
     local multipliers = {
-        {"SPEED", gameState.speedMultiplier, colors.warning},
-        {"PROXIMITY", gameState.proximityMultiplier, colors.accent},
-        {"NEAR MISS", gameState.nearMissMultiplier, colors.success},
-        {"LANE VARIETY", gameState.laneChangeMultiplier, colors.danger}
+        {"Speed", trafficData.speedMultiplier},
+        {"Proximity", trafficData.proximityMultiplier},
+        {"Near Miss", trafficData.nearMissMultiplier},
+        {"Lane Usage", trafficData.laneChangeMultiplier}
     }
     
-    for i, mult in ipairs(multipliers) do
-        local y = startY + 25 + (i - 1) * 25
-        local barWidth = 140
-        local barHeight = 16
+    for _, mult in ipairs(multipliers) do
+        local color = mult[2] > 1.5 and colors.success or 
+                     mult[2] > 1.0 and colors.warning or colors.textDim
         
-        -- Label
-        ui.setCursor(vec2(uiState.windowPos.x + 20, y))
-        ui.pushFont(ui.Font.Small)
-        ui.textColored(mult[1], colors.textDim)
-        ui.popFont()
-        
-        -- Value
-        ui.setCursor(vec2(uiState.windowPos.x + 120, y))
-        ui.textColored(string.format("%.1fx", mult[2]), colors.text)
-        
-        -- Bar background
-        local barPos = vec2(uiState.windowPos.x + 170, y + 2)
-        ui.drawRectFilled(barPos, barPos + vec2(barWidth, barHeight), colors.border, 2)
-        
-        -- Bar fill
-        local fillWidth = barWidth * math.min(1.0, mult[2] / 2.0)
-        if fillWidth > 0 then
-            ui.drawRectFilled(barPos, barPos + vec2(fillWidth, barHeight), mult[3], 2)
-        end
+        ui.pushStyleColor(ui.Col.Text, color)
+        ui.text(string.format("%s: %.2fx", mult[1], mult[2]))
+        ui.popStyleColor()
     end
+    
+    -- Total multiplier
+    local totalMult = trafficData.speedMultiplier * trafficData.proximityMultiplier * 
+                     trafficData.nearMissMultiplier * trafficData.laneChangeMultiplier
+    
+    ui.spacing()
+    ui.pushStyleColor(ui.Col.Text, colors.accent)
+    ui.pushFont(ui.Font.Main)
+    ui.text(string.format("Total: %.2fx", totalMult))
+    ui.popFont()
+    ui.popStyleColor()
 end
 
--- Draw lives section
-function drawLivesSection()
-    local startY = uiState.windowPos.y + 280
-    
-    ui.setCursor(vec2(uiState.windowPos.x + 20, startY))
+-- Draw statistics section
+function drawStatisticsSection()
     ui.pushFont(ui.Font.Small)
-    ui.textColored("LIVES", colors.textDim)
+    ui.pushStyleColor(ui.Col.Text, colors.textDim)
+    ui.text("STATISTICS")
+    ui.popStyleColor()
     ui.popFont()
     
-    -- Lives display
-    for i = 1, gameState.maxLives do
-        local heartPos = vec2(uiState.windowPos.x + 20 + (i - 1) * 35, startY + 20)
-        local heartColor = i <= gameState.lives and colors.danger or colors.border
-        
-        -- Heart shape (simplified as circle)
-        ui.drawCircleFilled(heartPos + vec2(12, 12), 12, heartColor)
-        ui.setCursor(heartPos + vec2(6, 4))
-        ui.pushFont(ui.Font.Small)
-        ui.textColored("♥", colors.background)
-        ui.popFont()
+    local uniqueLaneCount = 0
+    for _ in pairs(trafficData.uniqueLanesUsed) do
+        uniqueLaneCount = uniqueLaneCount + 1
     end
     
-    -- Collision penalty info
-    if gameState.collisionCount > 0 then
-        ui.setCursor(vec2(uiState.windowPos.x + 140, startY + 15))
-        ui.pushFont(ui.Font.Small)
-        local penaltyText = gameState.collisionCount == 1 and "-5% SCORE" or 
-                           gameState.collisionCount == 2 and "-15% SCORE" or "SCORE RESET!"
-        ui.textColored(penaltyText, colors.danger)
-        ui.popFont()
-        
-        ui.setCursor(vec2(uiState.windowPos.x + 140, startY + 30))
-        ui.textColored(string.format("Collisions: %d", gameState.collisionCount), colors.textDim)
+    ui.text(string.format("Lane Changes: %d", trafficData.laneChanges))
+    ui.text(string.format("Unique Lanes: %d", uniqueLaneCount))
+    ui.text(string.format("Collisions: %d", trafficData.collisionCount))
+    
+    if uniqueLaneCount >= 3 then
+        ui.pushStyleColor(ui.Col.Text, colors.success)
+        ui.text("🎉 Lane Master Bonus Active!")
+        ui.popStyleColor()
     end
 end
 
--- Draw session statistics
-function drawStatsSection()
-    local startY = uiState.windowPos.y + 360
-    
-    ui.setCursor(vec2(uiState.windowPos.x + 20, startY))
-    ui.pushFont(ui.Font.Small)
-    ui.textColored("SESSION STATS", colors.textDim)
-    ui.popFont()
-    
-    local stats = {
-        {"Time", string.format("%.0fs", gameState.sessionTime)},
-        {"Distance", string.format("%.1fkm", gameState.totalDistance / 1000)},
-        {"Avg Speed", string.format("%.0f km/h", gameState.lastSpeed)},
-        {"Lane Changes", tostring(gameState.totalLaneChanges)},
-        {"Near Misses", tostring(gameState.nearMissCount)}
-    }
-    
-    for i, stat in ipairs(stats) do
-        local y = startY + 20 + (i - 1) * 18
-        ui.setCursor(vec2(uiState.windowPos.x + 20, y))
-        ui.pushFont(ui.Font.Small)
-        ui.textColored(stat[1] .. ":", colors.textDim)
-        ui.setCursor(vec2(uiState.windowPos.x + 120, y))
-        ui.textColored(stat[2], colors.text)
-        ui.popFont()
+-- Draw control buttons
+function drawControlButtons()
+    -- Reset button
+    ui.pushStyleColor(ui.Col.Button, colors.danger)
+    ui.pushStyleColor(ui.Col.ButtonHovered, rgbm(0.7, 0.2, 0.2, 1))
+    if ui.button("Reset Score##ResetBtn", vec2(-1, 30)) then
+        resetGame()
     end
+    ui.popStyleColor(2)
     
-    -- Total multiplier display
-    local totalMult = gameState.speedMultiplier * gameState.proximityMultiplier * 
-                     gameState.nearMissMultiplier * gameState.laneChangeMultiplier
-    
-    ui.setCursor(vec2(uiState.windowPos.x + 20, startY + 130))
-    ui.pushFont(ui.Font.Title)
-    ui.textColored("TOTAL: ", colors.textDim)
-    ui.setCursor(vec2(uiState.windowPos.x + 90, startY + 130))
-    ui.textColored(string.format("%.2fx", totalMult), colors.accent)
-    ui.popFont()
+    -- Toggle visibility button
+    ui.pushStyleColor(ui.Col.Button, colors.accent)
+    ui.pushStyleColor(ui.Col.ButtonHovered, colors.accentDark)
+    if ui.button("Hide UI##ToggleBtn", vec2(-1, 25)) then
+        trafficData.uiVisible = false
+    end
+    ui.popStyleColor(2)
 end
 
--- Handle window dragging
-function handleWindowDragging()
-    local mouse = ui.mousePos
-    local headerRect = {
-        uiState.windowPos,
-        uiState.windowPos + vec2(uiState.windowSize.x, 40)
-    }
-    
-    if ui.mouseClicked and 
-       mouse.x >= headerRect[1].x and mouse.x <= headerRect[2].x and
-       mouse.y >= headerRect[1].y and mouse.y <= headerRect[2].y then
-        uiState.isDragging = true
-        uiState.dragOffset = mouse - uiState.windowPos
-    end
-    
-    if uiState.isDragging then
-        if ui.mouseDown then
-            uiState.windowPos = mouse - uiState.dragOffset
-            -- Keep window on screen
-            local screenSize = ui.windowSize
-            uiState.windowPos.x = math.max(0, math.min(screenSize.x - uiState.windowSize.x, uiState.windowPos.x))
-            uiState.windowPos.y = math.max(0, math.min(screenSize.y - uiState.windowSize.y, uiState.windowPos.y))
-        else
-            uiState.isDragging = false
-        end
-    end
-end
-
--- Timer system
-function addTimer(delay, callback)
-    table.insert(timers, {
-        time = gameState.sessionTime + delay,
-        callback = callback
-    })
-end
-
-function updateTimers(dt)
-    for i = #timers, 1, -1 do
-        if gameState.sessionTime >= timers[i].time then
-            timers[i].callback()
-            table.remove(timers, i)
-        end
-    end
+-- Reset game state
+function resetGame()
+    trafficData.currentScore = 0
+    trafficData.lives = trafficData.maxLives
+    trafficData.collisionCount = 0
+    trafficData.laneChanges = 0
+    trafficData.uniqueLanesUsed = {}
+    trafficData.lastLaneChangeTime = 0
 end
 
 -- Key bindings
-function script.key(key)
-    if key == ui.Key.F7 then
-        uiState.isVisible = not uiState.isVisible
-    elseif key == ui.Key.F8 then
-        -- Reset demo (for testing)
-        gameState.currentScore = 0
-        gameState.lives = gameState.maxLives
-        gameState.collisionCount = 0
-        gameState.lanesUsed = {}
-        gameState.totalLaneChanges = 0
-        gameState.nearMissCount = 0
+function script.key(key, down)
+    if down then
+        -- Toggle UI with F7
+        if key == ui.Key.F7 then
+            trafficData.uiVisible = not trafficData.uiVisible
+        end
+        
+        -- Reset with F8
+        if key == ui.Key.F8 then
+            resetGame()
+        end
     end
+end
+
+-- Server-side networking functions (if needed)
+function script.serverMessage(senderCarID, data)
+    -- Handle messages from server if needed
+    -- This would be for multiplayer synchronization
+end
+
+-- Send data to server
+function sendToServer(data)
+    -- ac.sendServerMessage would be used here for multiplayer
+    -- This is a placeholder for server communication
 end
