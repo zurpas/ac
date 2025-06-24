@@ -1,435 +1,296 @@
--- Traffic Server Script for Assetto Corsa with CSP
--- Modern UI with moveable interface for traffic scoring system
+-- Traffic Management UI Script for CSP (Client-side)
+-- This script creates a modern, draggable UI for managing traffic settings
 
--- Import required libraries
-local ui = require('shared/ui')
-local sim = ac.getSim()
+-- Script initialization
+local scriptName = "Traffic Manager UI"
+local scriptVersion = "1.0.0"
 
--- Global variables for the traffic system
-local trafficData = {
-    personalBest = 0,
-    currentScore = 0,
-    lives = 3,
-    maxLives = 3,
-    
-    -- Multipliers
-    speedMultiplier = 1.0,
-    proximityMultiplier = 1.0,
-    nearMissMultiplier = 1.0,
-    laneChangeMultiplier = 1.0,
-    
-    -- Tracking variables
-    laneChanges = 0,
-    uniqueLanesUsed = {},
-    lastLaneChangeTime = 0,
-    collisionCount = 0,
-    
-    -- UI State
-    uiVisible = true,
-    uiPosition = vec2(100, 100),
-    uiSize = vec2(350, 450),
-    isDragging = false,
-    dragOffset = vec2(0, 0)
+-- UI State variables
+local ui_state = {
+    show_main_window = false,
+    show_settings = false,
+    traffic_enabled = false,
+    traffic_density = 50,
+    traffic_speed_multiplier = 1.0,
+    spawn_distance = 500,
+    despawn_distance = 200,
+    max_traffic_cars = 20,
+    window_pos = vec2(100, 100),
+    window_size = vec2(400, 300),
+    last_update = 0
 }
 
--- Color scheme for modern UI
-local colors = {
-    background = rgbm(0.08, 0.08, 0.12, 0.95),
-    backgroundDark = rgbm(0.05, 0.05, 0.08, 0.98),
-    accent = rgbm(0.2, 0.8, 0.9, 1),
-    accentDark = rgbm(0.15, 0.6, 0.7, 1),
-    success = rgbm(0.2, 0.8, 0.4, 1),
-    warning = rgbm(1.0, 0.7, 0.2, 1),
-    danger = rgbm(0.9, 0.3, 0.3, 1),
-    text = rgbm(0.95, 0.95, 0.95, 1),
-    textDim = rgbm(0.7, 0.7, 0.7, 1)
-}
-
--- Initialize the script
-function script.prepare(dt)
-    -- Reset data when script loads
-    trafficData.currentScore = 0
-    trafficData.lives = trafficData.maxLives
-    trafficData.collisionCount = 0
-    trafficData.uniqueLanesUsed = {}
-end
-
--- Main update function called every frame
-function script.update(dt)
-    updateTrafficLogic(dt)
-    calculateMultipliers(dt)
-    updateScore(dt)
-end
-
--- Update traffic logic and detection
-function updateTrafficLogic(dt)
-    local car = ac.getCar(0) -- Player car
-    if not car then return end
+-- Traffic management functions
+local traffic_manager = {
+    cars = {},
+    spawn_timer = 0,
+    spawn_interval = 5.0,
     
-    -- Detect lane changes (simplified - you'd need proper lane detection)
-    local currentLane = math.floor(car.position.x / 3.5) -- Rough lane calculation
-    if trafficData.lastLane and trafficData.lastLane ~= currentLane then
-        trafficData.laneChanges = trafficData.laneChanges + 1
-        trafficData.uniqueLanesUsed[currentLane] = true
-        trafficData.lastLaneChangeTime = sim.time
-    end
-    trafficData.lastLane = currentLane
+    -- Initialize traffic system
+    init = function(self)
+        ac.log("Traffic Manager initialized")
+    end,
     
-    -- Check for collisions/contacts
-    checkCollisions()
-end
-
--- Calculate scoring multipliers
-function calculateMultipliers(dt)
-    local car = ac.getCar(0)
-    if not car then return end
-    
-    -- Speed multiplier (higher speed = higher multiplier)
-    local speedKmh = car.speedKmh
-    trafficData.speedMultiplier = math.max(0.1, math.min(3.0, speedKmh / 100))
-    
-    -- Proximity multiplier (closer to other cars = higher multiplier)
-    trafficData.proximityMultiplier = calculateProximityMultiplier()
-    
-    -- Near miss multiplier (recent close calls)
-    trafficData.nearMissMultiplier = calculateNearMissMultiplier()
-    
-    -- Lane change multiplier (using 3+ lanes gives bonus)
-    local uniqueLaneCount = 0
-    for _ in pairs(trafficData.uniqueLanesUsed) do
-        uniqueLaneCount = uniqueLaneCount + 1
-    end
-    trafficData.laneChangeMultiplier = uniqueLaneCount >= 3 and 2.0 or 1.0
-end
-
--- Calculate proximity to other cars
-function calculateProximityMultiplier()
-    local minDistance = 999
-    local playerCar = ac.getCar(0)
-    if not playerCar then return 1.0 end
-    
-    for i = 1, sim.carsCount - 1 do
-        local car = ac.getCar(i)
-        if car then
-            local distance = playerCar.position:distance(car.position)
-            minDistance = math.min(minDistance, distance)
-        end
-    end
-    
-    -- Closer cars give higher multiplier
-    if minDistance < 5 then return 2.5
-    elseif minDistance < 10 then return 2.0
-    elseif minDistance < 20 then return 1.5
-    else return 1.0 end
-end
-
--- Calculate near miss multiplier
-function calculateNearMissMultiplier()
-    -- This would need proper collision detection implementation
-    return 1.0 -- Placeholder
-end
-
--- Update the current score
-function updateScore(dt)
-    if trafficData.lives <= 0 then return end
-    
-    local basePoints = 10 * dt -- Base points per second
-    local totalMultiplier = trafficData.speedMultiplier * 
-                           trafficData.proximityMultiplier * 
-                           trafficData.nearMissMultiplier * 
-                           trafficData.laneChangeMultiplier
-    
-    trafficData.currentScore = trafficData.currentScore + (basePoints * totalMultiplier)
-    
-    -- Update personal best
-    if trafficData.currentScore > trafficData.personalBest then
-        trafficData.personalBest = trafficData.currentScore
-    end
-end
-
--- Check for collisions and handle life system
-function checkCollisions()
-    -- This would need proper collision detection
-    -- For now, this is a placeholder
-    local collision = false -- You'd implement actual collision detection here
-    
-    if collision then
-        trafficData.collisionCount = trafficData.collisionCount + 1
+    -- Update traffic system
+    update = function(self, dt)
+        if not ui_state.traffic_enabled then return end
         
-        if trafficData.collisionCount == 1 then
-            -- First collision: lose 5% of points
-            trafficData.currentScore = trafficData.currentScore * 0.95
-            trafficData.lives = trafficData.lives - 1
-        elseif trafficData.collisionCount == 2 then
-            -- Second collision: lose 15% of points
-            trafficData.currentScore = trafficData.currentScore * 0.85
-            trafficData.lives = trafficData.lives - 1
-        elseif trafficData.collisionCount >= 3 then
-            -- Third collision: reset score and lives
-            trafficData.currentScore = 0
-            trafficData.lives = 0
-            trafficData.collisionCount = 0
+        self.spawn_timer = self.spawn_timer + dt
+        
+        if self.spawn_timer >= self.spawn_interval then
+            self:spawn_traffic_car()
+            self.spawn_timer = 0
         end
+        
+        self:update_traffic_cars(dt)
+    end,
+    
+    -- Spawn a new traffic car
+    spawn_traffic_car = function(self)
+        if #self.cars >= ui_state.max_traffic_cars then return end
+        
+        local player_pos = ac.getCar(0).position
+        local spawn_pos = player_pos + vec3(
+            math.random(-ui_state.spawn_distance, ui_state.spawn_distance),
+            0,
+            math.random(-ui_state.spawn_distance, ui_state.spawn_distance)
+        )
+        
+        -- Add traffic car data
+        table.insert(self.cars, {
+            position = spawn_pos,
+            velocity = vec3(0, 0, math.random(20, 60) * ui_state.traffic_speed_multiplier),
+            id = #self.cars + 1,
+            spawn_time = os.time()
+        })
+        
+        ac.log("Spawned traffic car at: " .. tostring(spawn_pos))
+    end,
+    
+    -- Update existing traffic cars
+    update_traffic_cars = function(self, dt)
+        local player_pos = ac.getCar(0).position
+        
+        for i = #self.cars, 1, -1 do
+            local car = self.cars[i]
+            local distance = player_pos:distance(car.position)
+            
+            -- Remove cars that are too far away
+            if distance > ui_state.despawn_distance then
+                table.remove(self.cars, i)
+                ac.log("Despawned traffic car " .. car.id)
+            else
+                -- Update car position
+                car.position = car.position + car.velocity * dt
+            end
+        end
+    end,
+    
+    -- Clear all traffic
+    clear_all = function(self)
+        self.cars = {}
+        ac.log("Cleared all traffic cars")
     end
-end
+}
 
--- Main UI rendering function
-function script.drawUI()
-    if not trafficData.uiVisible then return end
-    
-    -- Handle window dragging
-    handleWindowDragging()
-    
-    -- Set window properties
-    ui.pushStyleVar(ui.StyleVar.WindowRounding, 12)
+-- UI Drawing functions
+local function draw_main_window()
+    ui.pushStyleVar(ui.StyleVar.WindowRounding, 8)
     ui.pushStyleVar(ui.StyleVar.WindowPadding, vec2(16, 16))
-    ui.pushStyleColor(ui.Col.WindowBg, colors.backgroundDark)
-    ui.pushStyleColor(ui.Col.TitleBg, colors.accent)
-    ui.pushStyleColor(ui.Col.TitleBgActive, colors.accentDark)
     
-    -- Create the main window
-    ui.setNextWindowPos(trafficData.uiPosition, ui.Cond.FirstUseEver)
-    ui.setNextWindowSize(trafficData.uiSize, ui.Cond.FirstUseEver)
+    ui.setNextWindowPos(ui_state.window_pos, ui.Cond.FirstUseEver)
+    ui.setNextWindowSize(ui_state.window_size, ui.Cond.FirstUseEver)
     
-    if ui.begin('Traffic Server##TrafficUI', true, ui.WindowFlags.NoCollapse) then
-        trafficData.uiPosition = ui.getWindowPos()
-        trafficData.uiSize = ui.getWindowSize()
+    local window_flags = bit.bor(
+        ui.WindowFlags.None,
+        ui.WindowFlags.NoCollapse
+    )
+    
+    ui.setNextWindowBgAlpha(0.9)
+    
+    if ui.begin("Traffic Manager", window_flags) then
+        -- Header
+        ui.pushFont(ui.Font.Title)
+        ui.textColoredWrapped(rgbm(0.3, 0.8, 1.0, 1.0), "🚗 Traffic Management System")
+        ui.popFont()
         
-        drawMainInterface()
+        ui.separator()
+        ui.spacing()
+        
+        -- Main controls
+        ui.pushFont(ui.Font.Main)
+        
+        -- Traffic enable/disable
+        local traffic_changed = false
+        ui_state.traffic_enabled, traffic_changed = ui.checkbox("Enable Traffic", ui_state.traffic_enabled)
+        
+        if traffic_changed then
+            if ui_state.traffic_enabled then
+                traffic_manager:init()
+                ac.log("Traffic system enabled")
+            else
+                traffic_manager:clear_all()
+                ac.log("Traffic system disabled")
+            end
+        end
+        
+        ui.spacing()
+        
+        if ui_state.traffic_enabled then
+            -- Traffic density slider
+            ui.text("Traffic Density:")
+            ui_state.traffic_density = ui.slider("##density", ui_state.traffic_density, 0, 100, "%.0f%%")
+            
+            ui.spacing()
+            
+            -- Speed multiplier
+            ui.text("Speed Multiplier:")
+            ui_state.traffic_speed_multiplier = ui.slider("##speed", ui_state.traffic_speed_multiplier, 0.1, 3.0, "%.1fx")
+            
+            ui.spacing()
+            
+            -- Max cars
+            ui.text("Max Traffic Cars:")
+            ui_state.max_traffic_cars = ui.slider("##maxcars", ui_state.max_traffic_cars, 1, 50, "%.0f")
+            
+            ui.spacing()
+            
+            -- Distance settings
+            ui.text("Spawn Distance:")
+            ui_state.spawn_distance = ui.slider("##spawndist", ui_state.spawn_distance, 100, 1000, "%.0fm")
+            
+            ui.text("Despawn Distance:")
+            ui_state.despawn_distance = ui.slider("##despawndist", ui_state.despawn_distance, 100, 500, "%.0fm")
+            
+            ui.spacing()
+            ui.separator()
+            ui.spacing()
+            
+            -- Status information
+            ui.text("Status Information:")
+            ui.textColored(rgbm(0.7, 0.7, 0.7, 1.0), "Active Cars: " .. #traffic_manager.cars)
+            ui.textColored(rgbm(0.7, 0.7, 0.7, 1.0), "Next Spawn: " .. string.format("%.1fs", traffic_manager.spawn_interval - traffic_manager.spawn_timer))
+            
+            ui.spacing()
+            
+            -- Action buttons
+            if ui.button("Clear All Traffic", vec2(150, 30)) then
+                traffic_manager:clear_all()
+            end
+            
+            ui.sameLine()
+            
+            if ui.button("Spawn Car Now", vec2(150, 30)) then
+                traffic_manager:spawn_traffic_car()
+            end
+        else
+            ui.textColoredWrapped(rgbm(0.8, 0.8, 0.8, 0.7), "Enable traffic to access controls")
+        end
+        
+        ui.popFont()
+        
+        ui.spacing()
+        ui.separator()
+        
+        -- Footer with settings button
+        if ui.button("Settings", vec2(80, 25)) then
+            ui_state.show_settings = not ui_state.show_settings
+        end
+        
+        ui.sameLine()
+        ui.spring()
+        ui.textColored(rgbm(0.5, 0.5, 0.5, 1.0), "v" .. scriptVersion)
     end
     ui.endWindow()
     
-    -- Pop styles
-    ui.popStyleColor(3)
     ui.popStyleVar(2)
 end
 
--- Handle window dragging functionality
-function handleWindowDragging()
-    local mousePos = ui.mousePos()
-    local isMouseDown = ui.isMouseDown(ui.MouseButton.Left)
+local function draw_settings_window()
+    if not ui_state.show_settings then return end
     
-    if ui.isWindowHovered() and isMouseDown and not trafficData.isDragging then
-        trafficData.isDragging = true
-        trafficData.dragOffset = mousePos - trafficData.uiPosition
-    elseif not isMouseDown then
-        trafficData.isDragging = false
-    end
+    ui.pushStyleVar(ui.StyleVar.WindowRounding, 8)
+    ui.pushStyleVar(ui.StyleVar.WindowPadding, vec2(12, 12))
     
-    if trafficData.isDragging then
-        trafficData.uiPosition = mousePos - trafficData.dragOffset
-    end
-end
-
--- Draw the main interface elements
-function drawMainInterface()
-    -- Header with title
-    ui.pushFont(ui.Font.Title)
-    ui.pushStyleColor(ui.Col.Text, colors.accent)
-    ui.text("🏁 TRAFFIC MASTER")
-    ui.popStyleColor()
-    ui.popFont()
+    ui.setNextWindowSize(vec2(300, 200), ui.Cond.FirstUseEver)
+    ui.setNextWindowBgAlpha(0.95)
     
-    ui.separator()
-    ui.spacing()
-    
-    -- Score Section
-    drawScoreSection()
-    
-    ui.spacing()
-    ui.separator()
-    ui.spacing()
-    
-    -- Lives Section
-    drawLivesSection()
-    
-    ui.spacing()
-    ui.separator()
-    ui.spacing()
-    
-    -- Multipliers Section
-    drawMultipliersSection()
-    
-    ui.spacing()
-    ui.separator()
-    ui.spacing()
-    
-    -- Statistics Section
-    drawStatisticsSection()
-    
-    ui.spacing()
-    
-    -- Control buttons
-    drawControlButtons()
-end
-
--- Draw score information
-function drawScoreSection()
-    ui.pushFont(ui.Font.Small)
-    ui.pushStyleColor(ui.Col.Text, colors.textDim)
-    ui.text("SCORES")
-    ui.popStyleColor()
-    ui.popFont()
-    
-    -- Current Score
-    ui.pushFont(ui.Font.Large)
-    ui.pushStyleColor(ui.Col.Text, colors.success)
-    ui.text(string.format("Current: %.0f", trafficData.currentScore))
-    ui.popStyleColor()
-    ui.popFont()
-    
-    -- Personal Best
-    ui.pushStyleColor(ui.Col.Text, colors.warning)
-    ui.text(string.format("Personal Best: %.0f", trafficData.personalBest))
-    ui.popStyleColor()
-end
-
--- Draw lives display
-function drawLivesSection()
-    ui.pushFont(ui.Font.Small)
-    ui.pushStyleColor(ui.Col.Text, colors.textDim)
-    ui.text("LIVES")
-    ui.popStyleColor()
-    ui.popFont()
-    
-    -- Lives display with hearts
-    local heartColor = trafficData.lives > 0 and colors.danger or colors.textDim
-    ui.pushStyleColor(ui.Col.Text, heartColor)
-    
-    local heartsText = ""
-    for i = 1, trafficData.maxLives do
-        if i <= trafficData.lives then
-            heartsText = heartsText .. "♥ "
-        else
-            heartsText = heartsText .. "♡ "
-        end
-    end
-    
-    ui.pushFont(ui.Font.Large)
-    ui.text(heartsText)
-    ui.popFont()
-    ui.popStyleColor()
-    
-    -- Collision penalties info
-    ui.pushFont(ui.Font.Small)
-    ui.pushStyleColor(ui.Col.Text, colors.textDim)
-    ui.text("1st hit: -5% | 2nd hit: -15% | 3rd hit: Reset")
-    ui.popStyleColor()
-    ui.popFont()
-end
-
--- Draw multipliers section
-function drawMultipliersSection()
-    ui.pushFont(ui.Font.Small)
-    ui.pushStyleColor(ui.Col.Text, colors.textDim)
-    ui.text("MULTIPLIERS")
-    ui.popStyleColor()
-    ui.popFont()
-    
-    local multipliers = {
-        {"Speed", trafficData.speedMultiplier},
-        {"Proximity", trafficData.proximityMultiplier},
-        {"Near Miss", trafficData.nearMissMultiplier},
-        {"Lane Usage", trafficData.laneChangeMultiplier}
-    }
-    
-    for _, mult in ipairs(multipliers) do
-        local color = mult[2] > 1.5 and colors.success or 
-                     mult[2] > 1.0 and colors.warning or colors.textDim
+    if ui.begin("Traffic Settings", ui.WindowFlags.NoCollapse) then
+        ui.pushFont(ui.Font.Small)
         
-        ui.pushStyleColor(ui.Col.Text, color)
-        ui.text(string.format("%s: %.2fx", mult[1], mult[2]))
-        ui.popStyleColor()
-    end
-    
-    -- Total multiplier
-    local totalMult = trafficData.speedMultiplier * trafficData.proximityMultiplier * 
-                     trafficData.nearMissMultiplier * trafficData.laneChangeMultiplier
-    
-    ui.spacing()
-    ui.pushStyleColor(ui.Col.Text, colors.accent)
-    ui.pushFont(ui.Font.Main)
-    ui.text(string.format("Total: %.2fx", totalMult))
-    ui.popFont()
-    ui.popStyleColor()
-end
-
--- Draw statistics section
-function drawStatisticsSection()
-    ui.pushFont(ui.Font.Small)
-    ui.pushStyleColor(ui.Col.Text, colors.textDim)
-    ui.text("STATISTICS")
-    ui.popStyleColor()
-    ui.popFont()
-    
-    local uniqueLaneCount = 0
-    for _ in pairs(trafficData.uniqueLanesUsed) do
-        uniqueLaneCount = uniqueLaneCount + 1
-    end
-    
-    ui.text(string.format("Lane Changes: %d", trafficData.laneChanges))
-    ui.text(string.format("Unique Lanes: %d", uniqueLaneCount))
-    ui.text(string.format("Collisions: %d", trafficData.collisionCount))
-    
-    if uniqueLaneCount >= 3 then
-        ui.pushStyleColor(ui.Col.Text, colors.success)
-        ui.text("🎉 Lane Master Bonus Active!")
-        ui.popStyleColor()
-    end
-end
-
--- Draw control buttons
-function drawControlButtons()
-    -- Reset button
-    ui.pushStyleColor(ui.Col.Button, colors.danger)
-    ui.pushStyleColor(ui.Col.ButtonHovered, rgbm(0.7, 0.2, 0.2, 1))
-    if ui.button("Reset Score##ResetBtn", vec2(-1, 30)) then
-        resetGame()
-    end
-    ui.popStyleColor(2)
-    
-    -- Toggle visibility button
-    ui.pushStyleColor(ui.Col.Button, colors.accent)
-    ui.pushStyleColor(ui.Col.ButtonHovered, colors.accentDark)
-    if ui.button("Hide UI##ToggleBtn", vec2(-1, 25)) then
-        trafficData.uiVisible = false
-    end
-    ui.popStyleColor(2)
-end
-
--- Reset game state
-function resetGame()
-    trafficData.currentScore = 0
-    trafficData.lives = trafficData.maxLives
-    trafficData.collisionCount = 0
-    trafficData.laneChanges = 0
-    trafficData.uniqueLanesUsed = {}
-    trafficData.lastLaneChangeTime = 0
-end
-
--- Key bindings
-function script.key(key, down)
-    if down then
-        -- Toggle UI with F7
-        if key == ui.Key.F7 then
-            trafficData.uiVisible = not trafficData.uiVisible
+        ui.text("Spawn Interval:")
+        traffic_manager.spawn_interval = ui.slider("##interval", traffic_manager.spawn_interval, 1.0, 30.0, "%.1fs")
+        
+        ui.spacing()
+        ui.separator()
+        ui.spacing()
+        
+        ui.text("Keybindings:")
+        ui.textColored(rgbm(0.7, 0.7, 0.7, 1.0), "Ctrl+T: Toggle Traffic UI")
+        ui.textColored(rgbm(0.7, 0.7, 0.7, 1.0), "Ctrl+R: Reset All Settings")
+        
+        ui.spacing()
+        
+        if ui.button("Close Settings", vec2(-1, 25)) then
+            ui_state.show_settings = false
         end
         
-        -- Reset with F8
-        if key == ui.Key.F8 then
-            resetGame()
-        end
+        ui.popFont()
+    end
+    ui.endWindow()
+    
+    ui.popStyleVar(2)
+end
+
+-- Input handling
+local function handle_input()
+    -- Toggle main window with Ctrl+T
+    if ui.keyboardButtonPressed(ui.Key.T) and (ui.keyboardButtonDown(ui.Key.LeftCtrl) or ui.keyboardButtonDown(ui.Key.RightCtrl)) then
+        ui_state.show_main_window = not ui_state.show_main_window
+        ac.log("Traffic UI toggled: " .. tostring(ui_state.show_main_window))
+    end
+    
+    -- Reset settings with Ctrl+R
+    if ui.keyboardButtonPressed(ui.Key.R) and (ui.keyboardButtonDown(ui.Key.LeftCtrl) or ui.keyboardButtonDown(ui.Key.RightCtrl)) then
+        ui_state.traffic_enabled = false
+        ui_state.traffic_density = 50
+        ui_state.traffic_speed_multiplier = 1.0
+        ui_state.max_traffic_cars = 20
+        traffic_manager:clear_all()
+        ac.log("Traffic settings reset")
     end
 end
 
--- Server-side networking functions (if needed)
-function script.serverMessage(senderCarID, data)
-    -- Handle messages from server if needed
-    -- This would be for multiplayer synchronization
+-- Main script functions
+function script.update(dt)
+    -- Handle input
+    handle_input()
+    
+    -- Update traffic manager
+    traffic_manager:update(dt)
+    
+    -- Update UI state
+    ui_state.last_update = ui_state.last_update + dt
 end
 
--- Send data to server
-function sendToServer(data)
-    -- ac.sendServerMessage would be used here for multiplayer
-    -- This is a placeholder for server communication
+function script.drawUI()
+    if ui_state.show_main_window then
+        draw_main_window()
+        draw_settings_window()
+    end
 end
+
+-- Optional: 3D rendering for traffic visualization
+function script.draw3D()
+    if not ui_state.traffic_enabled then return end
+    
+    -- Draw traffic car indicators
+    for _, car in ipairs(traffic_manager.cars) do
+        render.debugSphere(car.position, 2, rgbm(1, 0.5, 0, 0.8))
+        render.debugArrow(car.position, car.position + car.velocity:normalize() * 10, rgbm(0, 1, 0, 1))
+    end
+end
+
+-- Initialize on script load
+ac.log("Traffic Manager UI Script loaded successfully")
+ui_state.show_main_window = true -- Show UI on first load
