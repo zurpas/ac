@@ -574,7 +574,7 @@ function drawMainPanel()
     ui.beginTransparentWindow("trafficScoreUI", state.uiPosition, vec2(width, height), true)
     
     -- Handle mouse interactions for dragging
-    if ui.isWindowHovered() and ui.mouseClicked(ui.MouseButton.Left) and (state.uiMoving or ui.keyDown(ui.KeyIndex.Shift)) then
+    if ui.isHovered() and ui.mouseClicked(ui.MouseButton.Left) and (state.uiMoving or ac.isKeyDown(ac.KeyIndex.Shift)) then
         state.uiDragging = true
         state.dragOffset = ui.mousePos() - state.uiPosition
     end
@@ -632,7 +632,7 @@ function drawMainPanel()
     ui.popFont()
     
     ui.endTransparentWindow()
-end
+}
 
 -- Draw PB panel
 function drawPBPanel()
@@ -644,7 +644,7 @@ function drawPBPanel()
     ui.beginTransparentWindow("trafficPBUI", state.pbUiPosition, vec2(width, height), true)
     
     -- Handle mouse interactions for dragging PB panel
-    if ui.isWindowHovered() and ui.mouseClicked(ui.MouseButton.Left) and (state.pbUiMoving or ui.keyDown(ui.KeyIndex.Shift)) then
+    if ui.isHovered() and ui.mouseClicked(ui.MouseButton.Left) and (state.pbUiMoving or ac.isKeyDown(ac.KeyIndex.Shift)) then
         state.pbUiDragging = true
         state.pbDragOffset = ui.mousePos() - state.pbUiPosition
     end
@@ -687,7 +687,7 @@ function drawPBPanel()
     ui.popFont()
     
     ui.endTransparentWindow()
-end
+}
 
 -- Draw multiplier box
 function drawMultiplierBox(pos, width, height, label, value, bgColor)
@@ -705,7 +705,7 @@ function drawMultiplierBox(pos, width, height, label, value, bgColor)
     ui.pushFont(ui.Font.Normal)
     ui.text(value)
     ui.popFont()
-end
+}
 
 -- Draw messages panel
 function drawMessagesPanel(position)
@@ -741,7 +741,7 @@ function drawMessagesPanel(position)
     end
     
     ui.endTransparentWindow()
-end
+}
 
 -- Draw animations
 function drawAnimations()
