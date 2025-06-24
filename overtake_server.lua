@@ -178,7 +178,7 @@ end
 local function getCurrentLane(car)
     -- This is a very basic example - you would need to implement proper lane detection
     -- based on your track data or use data from your traffic system
-    local trackPos = car.worldPosition
+    local trackPos = car.position
     local trackWidth = 12  -- Typical track width in meters with multiple lanes
     
     -- Simple calculation based on position relative to track center
@@ -238,8 +238,8 @@ local function checkNearMiss(playerCarId, otherCarId)
         return false
     end
     
-    local playerPos = playerCar.worldPosition
-    local carPos = otherCar.worldPosition
+    local playerPos = playerCar.position
+    local carPos = otherCar.position
     
     -- Calculate distance
     local distance = math.sqrt((playerPos.x - carPos.x)^2 + (playerPos.z - carPos.z)^2)
@@ -317,8 +317,8 @@ local function checkOvertake(playerCarId, otherCarId)
         return false
     end
     
-    local playerPos = playerCar.worldPosition
-    local carPos = otherCar.worldPosition
+    local playerPos = playerCar.position
+    local carPos = otherCar.position
     
     -- Calculate longitudinal distance (along track direction)
     local playerForward = playerCar.look
