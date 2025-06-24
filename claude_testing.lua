@@ -1,15 +1,19 @@
--- Traffic Server UI Script for Assetto Corsa with CSP
+-- Traffic Server UI App for Assetto Corsa with CSP
 -- Modern draggable UI with scoring system for traffic server
 
--- Load required CSP libraries
-local sim = ac.getSim()
-local car = ac.getCar(0) -- Player car
-local ui = ac.getUI()
-
--- UI State and Configuration
-local uiState = {
-    windowPos = vec2(50, 50),
+-- App configuration
+local appConfig = {
+    name = "Traffic Master",
+    version = "1.0.0",
+    author = "Traffic Server",
     windowSize = vec2(380, 520),
+    windowPos = vec2(50, 50)
+}
+
+-- UI State
+local uiState = {
+    windowPos = appConfig.windowPos,
+    windowSize = appConfig.windowSize,
     isDragging = false,
     dragOffset = vec2(0, 0),
     isVisible = true,
@@ -59,15 +63,11 @@ local colors = {
     border = rgbm(0.3, 0.3, 0.4, 1)
 }
 
--- Initialize function
-function script.prepare(dt)
-    -- Reset game state if needed
-    gameState.sessionTime = 0
-    gameState.totalDistance = 0
-end
+-- Timer for delayed operations
+local timers = {}
 
--- Main update function
-function script.update(dt)
+-- Initialize function
+function script.windowMain(dt)
     -- Update session time
     gameState.sessionTime = gameState.sessionTime + dt
     
@@ -80,12 +80,21 @@ function script.update(dt)
     -- Calculate score
     calculateScore(dt)
     
-    -- Check for collisions
+    -- Check for collisions (simulated)
     checkCollisions()
+    
+    -- Update timers
+    updateTimers(dt)
+    
+    -- Draw UI if visible
+    if uiState.isVisible then
+        drawMainUI()
+    end
 end
 
 -- Game logic updates
 function updateGameLogic(dt)
+    local car = ac.getCar(0)
     if not car then return end
     
     -- Update distance
@@ -118,8 +127,7 @@ function updateMultipliers(dt)
     end
     
     -- Proximity multiplier (simplified - would need proper car detection)
-    -- This would normally check distance to other cars
-    gameState.proximityMultiplier = 1.0 + math.random() * 0.5
+    gameState.proximityMultiplier = 1.0 + math.sin(gameState.sessionTime) * 0.3 + 0.3
     
     -- Near miss multiplier
     gameState.nearMissMultiplier = 1.0 + (gameState.nearMissCount * 0.1)
@@ -137,6 +145,11 @@ function updateMultipliers(dt)
     else
         gameState.laneChangeMultiplier = 1.0
     end
+    
+    -- Simulate near misses for demo
+    if math.random() < 0.001 then
+        gameState.nearMissCount = gameState.nearMissCount + 1
+    end
 end
 
 -- Calculate current score
@@ -148,13 +161,17 @@ function calculateScore(dt)
                           gameState.laneChangeMultiplier
     
     gameState.currentScore = gameState.currentScore + (basePoints * totalMultiplier)
+    
+    -- Update personal best
+    if gameState.currentScore > gameState.personalBest then
+        gameState.personalBest = gameState.currentScore
+    end
 end
 
 -- Check for collisions and handle lives
 function checkCollisions()
-    -- This would normally check for actual collisions
-    -- For now, we'll simulate random collisions for demonstration
-    if math.random() < 0.0001 then -- Very rare random collision for demo
+    -- Simulate random collisions for demonstration
+    if math.random() < 0.0001 then
         handleCollision()
     end
 end
@@ -177,21 +194,19 @@ function handleCollision()
         gameState.currentScore = 0
         gameState.lives = 0
         gameState.collisionCount = 0
-        -- Reset lives after a few seconds (game logic)
-        setTimeout(function()
+        -- Reset lives after a few seconds
+        addTimer(3.0, function()
             gameState.lives = gameState.maxLives
-        end, 3000)
+        end)
     end
 end
 
--- UI Rendering
-function script.drawUI()
-    if not uiState.isVisible then return end
-    
+-- Main UI drawing function
+function drawMainUI()
     -- Handle window dragging
     handleWindowDragging()
     
-    -- Main window
+    -- Set window
     ui.pushClipRect(uiState.windowPos, uiState.windowPos + uiState.windowSize)
     
     -- Background
@@ -200,19 +215,11 @@ function script.drawUI()
     ui.drawRect(uiState.windowPos, uiState.windowPos + uiState.windowSize, 
                colors.border, 8, 1)
     
-    -- Header
+    -- Draw sections
     drawHeader()
-    
-    -- Score section
     drawScoreSection()
-    
-    -- Multipliers section
     drawMultipliersSection()
-    
-    -- Lives section
     drawLivesSection()
-    
-    -- Stats section
     drawStatsSection()
     
     ui.popClipRect()
@@ -233,13 +240,11 @@ function drawHeader()
     ui.textColored("TRAFFIC MASTER", colors.accent)
     ui.popFont()
     
-    -- Minimize button
-    local btnPos = headerRect[2] + vec2(-35, -30)
-    if ui.invisibleButton("minimize", btnPos, vec2(25, 20)) then
-        uiState.isVisible = false
-    end
-    ui.setCursor(btnPos + vec2(8, 2))
-    ui.textColored("—", colors.text)
+    -- Version
+    ui.setCursor(headerRect[2] + vec2(-80, -30))
+    ui.pushFont(ui.Font.Small)
+    ui.textColored("v" .. appConfig.version, colors.textDim)
+    ui.popFont()
 end
 
 -- Draw main score display
@@ -265,7 +270,7 @@ function drawScoreSection()
     
     ui.setCursor(vec2(uiState.windowPos.x + 200, startY + 20))
     ui.pushFont(ui.Font.Title)
-    local pbColor = gameState.currentScore > gameState.personalBest and colors.accent or colors.text
+    local pbColor = gameState.currentScore >= gameState.personalBest and colors.accent or colors.text
     ui.textColored(string.format("%.0f", gameState.personalBest), pbColor)
     ui.popFont()
     
@@ -280,7 +285,7 @@ function drawScoreSection()
                      colors.border, 4)
     
     -- Progress fill
-    local progress = math.min(1.0, gameState.currentScore / gameState.personalBest)
+    local progress = math.min(1.0, gameState.currentScore / math.max(1, gameState.personalBest))
     if progress > 0 then
         ui.drawRectFilled(progressPos, 
                          progressPos + vec2(progressWidth * progress, progressHeight), 
@@ -408,13 +413,13 @@ end
 
 -- Handle window dragging
 function handleWindowDragging()
-    local mouse = ui.mousePos()
+    local mouse = ui.mousePos
     local headerRect = {
         uiState.windowPos,
         uiState.windowPos + vec2(uiState.windowSize.x, 40)
     }
     
-    if ui.mouseClicked() and 
+    if ui.mouseClicked and 
        mouse.x >= headerRect[1].x and mouse.x <= headerRect[2].x and
        mouse.y >= headerRect[1].y and mouse.y <= headerRect[2].y then
         uiState.isDragging = true
@@ -422,13 +427,31 @@ function handleWindowDragging()
     end
     
     if uiState.isDragging then
-        if ui.mouseDown() then
+        if ui.mouseDown then
             uiState.windowPos = mouse - uiState.dragOffset
             -- Keep window on screen
-            uiState.windowPos.x = math.max(0, math.min(ui.windowSize().x - uiState.windowSize.x, uiState.windowPos.x))
-            uiState.windowPos.y = math.max(0, math.min(ui.windowSize().y - uiState.windowSize.y, uiState.windowPos.y))
+            local screenSize = ui.windowSize
+            uiState.windowPos.x = math.max(0, math.min(screenSize.x - uiState.windowSize.x, uiState.windowPos.x))
+            uiState.windowPos.y = math.max(0, math.min(screenSize.y - uiState.windowSize.y, uiState.windowPos.y))
         else
             uiState.isDragging = false
+        end
+    end
+end
+
+-- Timer system
+function addTimer(delay, callback)
+    table.insert(timers, {
+        time = gameState.sessionTime + delay,
+        callback = callback
+    })
+end
+
+function updateTimers(dt)
+    for i = #timers, 1, -1 do
+        if gameState.sessionTime >= timers[i].time then
+            timers[i].callback()
+            table.remove(timers, i)
         end
     end
 end
@@ -437,11 +460,13 @@ end
 function script.key(key)
     if key == ui.Key.F7 then
         uiState.isVisible = not uiState.isVisible
+    elseif key == ui.Key.F8 then
+        -- Reset demo (for testing)
+        gameState.currentScore = 0
+        gameState.lives = gameState.maxLives
+        gameState.collisionCount = 0
+        gameState.lanesUsed = {}
+        gameState.totalLaneChanges = 0
+        gameState.nearMissCount = 0
     end
-end
-
--- Helper function for delayed execution
-function setTimeout(func, delay)
-    -- This would need to be implemented with a proper timer system
-    -- For now, it's just a placeholder
 end
