@@ -632,7 +632,7 @@ function drawMainPanel()
     ui.popFont()
     
     ui.endTransparentWindow()
-}
+end
 
 -- Draw PB panel
 function drawPBPanel()
@@ -687,7 +687,7 @@ function drawPBPanel()
     ui.popFont()
     
     ui.endTransparentWindow()
-}
+end
 
 -- Draw multiplier box
 function drawMultiplierBox(pos, width, height, label, value, bgColor)
@@ -705,7 +705,7 @@ function drawMultiplierBox(pos, width, height, label, value, bgColor)
     ui.pushFont(ui.Font.Normal)
     ui.text(value)
     ui.popFont()
-}
+end
 
 -- Draw messages panel
 function drawMessagesPanel(position)
@@ -741,7 +741,7 @@ function drawMessagesPanel(position)
     end
     
     ui.endTransparentWindow()
-}
+end
 
 -- Draw animations
 function drawAnimations()
