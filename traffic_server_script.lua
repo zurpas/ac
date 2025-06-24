@@ -1,297 +1,369 @@
--- Server-side companion script for Traffic Server
--- This handles server-side logic and multiplayer synchronization
+-- Traffic Management Server Script for CSP
+-- This script handles server-side traffic logic and synchronization
 
--- Server data storage
-local serverData = {
-    playerScores = {},
-    leaderboard = {},
-    serverStats = {
-        totalPlayers = 0,
-        activeSession = true,
-        sessionStartTime = 0
-    }
+-- Script information
+local scriptName = "Traffic Server Manager"
+local scriptVersion = "1.0.0"
+
+-- Server state
+local server_state = {
+    initialized = false,
+    traffic_enabled = false,
+    active_sessions = {},
+    traffic_data = {
+        global_density = 50,
+        speed_multiplier = 1.0,
+        max_cars = 20,
+        spawn_distance = 500,
+        despawn_distance = 200
+    },
+    update_interval = 1.0,
+    last_update = 0
 }
 
--- Initialize server
-function script.prepare()
-    serverData.serverStats.sessionStartTime = os.time()
-    ac.log("Traffic Server: Server-side script initialized")
+-- Traffic synchronization data
+local sync_data = {
+    traffic_cars = {},
+    last_sync = 0,
+    sync_interval = 2.0
+}
+
+-- Utility functions
+local function log_server(message)
+    ac.log("[SERVER] " .. message)
+end
+
+local function broadcast_to_clients(event, data)
+    -- Broadcast event to all connected clients
+    for session_id, session in pairs(server_state.active_sessions) do
+        if session.connected then
+            ac.sendChatMessage(session_id, "[TRAFFIC] " .. event .. ": " .. (data or ""))
+        end
+    end
+end
+
+-- Session management
+local function register_session(session_id)
+    server_state.active_sessions[session_id] = {
+        connected = true,
+        join_time = os.time(),
+        traffic_enabled = false,
+        last_activity = os.time()
+    }
+    log_server("Session registered: " .. session_id)
+end
+
+local function unregister_session(session_id)
+    if server_state.active_sessions[session_id] then
+        server_state.active_sessions[session_id] = nil
+        log_server("Session unregistered: " .. session_id)
+    end
+end
+
+-- Traffic management functions
+local traffic_server = {
+    -- Initialize server traffic system
+    init = function(self)
+        server_state.initialized = true
+        log_server("Traffic server system initialized")
+        
+        -- Set up default traffic rules
+        self:setup_traffic_rules()
+    end,
+    
+    -- Setup traffic rules and AI behavior
+    setup_traffic_rules = function(self)
+        -- Configure AI behavior for traffic
+        ac.setAILevel(0.7) -- Moderate AI skill
+        ac.setAIAggression(0.3) -- Low aggression for traffic cars
+        
+        log_server("Traffic rules configured")
+    end,
+    
+    -- Update server traffic state
+    update = function(self, dt)
+        if not server_state.initialized then
+            self:init()
+        end
+        
+        server_state.last_update = server_state.last_update + dt
+        
+        -- Periodic updates
+        if server_state.last_update >= server_state.update_interval then
+            self:update_traffic_data()
+            self:cleanup_inactive_sessions()
+            server_state.last_update = 0
+        end
+        
+        -- Sync traffic data
+        sync_data.last_sync = sync_data.last_sync + dt
+        if sync_data.last_sync >= sync_data.sync_interval then
+            self:sync_traffic_data()
+            sync_data.last_sync = 0
+        end
+    end,
+    
+    -- Update traffic data based on active sessions
+    update_traffic_data = function(self)
+        local active_count = 0
+        local total_density = 0
+        
+        for session_id, session in pairs(server_state.active_sessions) do
+            if session.connected and session.traffic_enabled then
+                active_count = active_count + 1
+                total_density = total_density + (session.traffic_density or 50)
+            end
+        end
+        
+        if active_count > 0 then
+            server_state.traffic_data.global_density = total_density / active_count
+            server_state.traffic_enabled = true
+        else
+            server_state.traffic_enabled = false
+        end
+    end,
+    
+    -- Sync traffic data to clients
+    sync_traffic_data = function(self)
+        if not server_state.traffic_enabled then return end
+        
+        local sync_message = string.format(
+            "SYNC|density:%.0f|speed:%.1f|cars:%d",
+            server_state.traffic_data.global_density,
+            server_state.traffic_data.speed_multiplier,
+            #sync_data.traffic_cars
+        )
+        
+        broadcast_to_clients("TRAFFIC_SYNC", sync_message)
+    end,
+    
+    -- Clean up inactive sessions
+    cleanup_inactive_sessions = function(self)
+        local current_time = os.time()
+        local timeout = 300 -- 5 minutes timeout
+        
+        for session_id, session in pairs(server_state.active_sessions) do
+            if current_time - session.last_activity > timeout then
+                unregister_session(session_id)
+            end
+        end
+    end,
+    
+    -- Handle client requests
+    handle_client_request = function(self, session_id, request_type, data)
+        local session = server_state.active_sessions[session_id]
+        if not session then
+            register_session(session_id)
+            session = server_state.active_sessions[session_id]
+        end
+        
+        session.last_activity = os.time()
+        
+        if request_type == "ENABLE_TRAFFIC" then
+            session.traffic_enabled = true
+            session.traffic_density = tonumber(data) or 50
+            log_server("Traffic enabled for session " .. session_id .. " with density " .. session.traffic_density)
+            
+        elseif request_type == "DISABLE_TRAFFIC" then
+            session.traffic_enabled = false
+            log_server("Traffic disabled for session " .. session_id)
+            
+        elseif request_type == "UPDATE_SETTINGS" then
+            local settings = self:parse_settings(data)
+            for key, value in pairs(settings) do
+                session[key] = value
+            end
+            log_server("Settings updated for session " .. session_id)
+            
+        elseif request_type == "SPAWN_CAR" then
+            self:handle_spawn_request(session_id, data)
+            
+        elseif request_type == "CLEAR_TRAFFIC" then
+            self:clear_session_traffic(session_id)
+        end
+    end,
+    
+    -- Parse settings from client data
+    parse_settings = function(self, data)
+        local settings = {}
+        if not data then return settings end
+        
+        for setting in string.gmatch(data, "([^|]+)") do
+            local key, value = string.match(setting, "([^:]+):([^:]+)")
+            if key and value then
+                settings[key] = tonumber(value) or value
+            end
+        end
+        
+        return settings
+    end,
+    
+    -- Handle spawn car request
+    handle_spawn_request = function(self, session_id, data)
+        local session = server_state.active_sessions[session_id]
+        if not session or not session.traffic_enabled then return end
+        
+        if #sync_data.traffic_cars >= server_state.traffic_data.max_cars then
+            ac.sendChatMessage(session_id, "[TRAFFIC] Maximum traffic cars reached")
+            return
+        end
+        
+        -- Add new traffic car to sync data
+        local car_id = "traffic_" .. session_id .. "_" .. os.time()
+        table.insert(sync_data.traffic_cars, {
+            id = car_id,
+            session_id = session_id,
+            spawn_time = os.time(),
+            position = data or "0,0,0"
+        })
+        
+        log_server("Spawned traffic car " .. car_id .. " for session " .. session_id)
+        broadcast_to_clients("CAR_SPAWNED", car_id)
+    end,
+    
+    -- Clear traffic for specific session
+    clear_session_traffic = function(self, session_id)
+        for i = #sync_data.traffic_cars, 1, -1 do
+            if sync_data.traffic_cars[i].session_id == session_id then
+                table.remove(sync_data.traffic_cars, i)
+            end
+        end
+        
+        log_server("Cleared traffic for session " .. session_id)
+        broadcast_to_clients("TRAFFIC_CLEARED", session_id)
+    end,
+    
+    -- Get server statistics
+    get_stats = function(self)
+        local active_sessions = 0
+        local traffic_sessions = 0
+        
+        for _, session in pairs(server_state.active_sessions) do
+            if session.connected then
+                active_sessions = active_sessions + 1
+                if session.traffic_enabled then
+                    traffic_sessions = traffic_sessions + 1
+                end
+            end
+        end
+        
+        return {
+            active_sessions = active_sessions,
+            traffic_sessions = traffic_sessions,
+            total_traffic_cars = #sync_data.traffic_cars,
+            server_uptime = os.time() - (server_state.start_time or os.time()),
+            traffic_enabled = server_state.traffic_enabled
+        }
+    end
+}
+
+-- Event handlers
+function script.init()
+    server_state.start_time = os.time()
+    traffic_server:init()
+    log_server(scriptName .. " v" .. scriptVersion .. " initialized")
+end
+
+function script.update(dt)
+    traffic_server:update(dt)
 end
 
 -- Handle player connections
-function script.carConnected(carID)
-    local car = ac.getCar(carID)
-    if car then
-        serverData.playerScores[carID] = {
-            playerName = ac.getDriverName(carID),
-            currentScore = 0,
-            personalBest = 0,
-            lives = 3,
-            collisions = 0,
-            sessionTime = 0,
-            connected = true
-        }
-        
-        serverData.serverStats.totalPlayers = serverData.serverStats.totalPlayers + 1
-        
-        -- Send welcome message to player
-        local welcomeData = {
-            type = "welcome",
-            message = "Welcome to Traffic Server!",
-            serverTime = os.time() - serverData.serverStats.sessionStartTime
-        }
-        
-        ac.sendChatMessage(carID, "Traffic Server: Welcome! Press F7 to toggle UI, F8 to reset score.")
-        
-        ac.log("Traffic Server: Player " .. ac.getDriverName(carID) .. " connected")
-    end
-end
-
--- Handle player disconnections
-function script.carDisconnected(carID)
-    if serverData.playerScores[carID] then
-        serverData.playerScores[carID].connected = false
-        ac.log("Traffic Server: Player " .. ac.getDriverName(carID) .. " disconnected")
-    end
-end
-
--- Main server update loop
-function script.update(dt)
-    updateServerLogic(dt)
-    updateLeaderboard()
-    handleServerMessages()
-end
-
--- Update server-side logic
-function updateServerLogic(dt)
-    -- Update session time for all connected players
-    for carID, playerData in pairs(serverData.playerScores) do
-        if playerData.connected then
-            playerData.sessionTime = playerData.sessionTime + dt
-        end
-    end
+function script.onClientConnect(sessionId)
+    register_session(sessionId)
     
-    -- Clean up disconnected players after 5 minutes
-    local currentTime = os.time()
-    for carID, playerData in pairs(serverData.playerScores) do
-        if not playerData.connected and (currentTime - playerData.disconnectTime or 0) > 300 then
-            serverData.playerScores[carID] = nil
+    -- Send welcome message and current traffic state
+    local stats = traffic_server:get_stats()
+    local welcome_msg = string.format(
+        "Traffic System Active | Sessions: %d | Traffic Cars: %d",
+        stats.active_sessions,
+        stats.total_traffic_cars
+    )
+    
+    ac.sendChatMessage(sessionId, "[TRAFFIC] " .. welcome_msg)
+end
+
+function script.onClientDisconnect(sessionId)
+    traffic_server:clear_session_traffic(sessionId)
+    unregister_session(sessionId)
+end
+
+-- Handle chat commands
+function script.onChatMessage(sessionId, message)
+    -- Check if message is a traffic command
+    if string.sub(message, 1, 9) == "[TRAFFIC]" then
+        local command = string.sub(message, 11)
+        local cmd_parts = {}
+        
+        for part in string.gmatch(command, "([^|]+)") do
+            table.insert(cmd_parts, part)
+        end
+        
+        if #cmd_parts >= 2 then
+            local request_type = cmd_parts[1]
+            local data = cmd_parts[2]
+            traffic_server:handle_client_request(sessionId, request_type, data)
         end
     end
 end
 
--- Update and maintain leaderboard
-function updateLeaderboard()
-    local leaderboard = {}
-    
-    for carID, playerData in pairs(serverData.playerScores) do
-        if playerData.connected and playerData.personalBest > 0 then
-            table.insert(leaderboard, {
-                carID = carID,
-                name = playerData.playerName,
-                score = playerData.personalBest,
-                currentScore = playerData.currentScore,
-                lives = playerData.lives
-            })
-        end
-    end
-    
-    -- Sort by personal best score
-    table.sort(leaderboard, function(a, b)
-        return a.score > b.score
-    end)
-    
-    serverData.leaderboard = leaderboard
-end
+-- Periodic server announcements
+local announcement_timer = 0
+local announcement_interval = 300 -- 5 minutes
 
--- Handle messages from clients
-function script.clientMessage(carID, data)
-    if not serverData.playerScores[carID] then return end
+function script.periodicAnnouncements(dt)
+    announcement_timer = announcement_timer + dt
     
-    local messageData = ac.parseJSON(data)
-    if not messageData then return end
-    
-    if messageData.type == "scoreUpdate" then
-        handleScoreUpdate(carID, messageData)
-    elseif messageData.type == "collision" then
-        handleCollision(carID, messageData)
-    elseif messageData.type == "requestLeaderboard" then
-        sendLeaderboard(carID)
-    end
-end
-
--- Handle score updates from clients
-function handleScoreUpdate(carID, data)
-    local playerData = serverData.playerScores[carID]
-    if not playerData then return end
-    
-    playerData.currentScore = data.currentScore or 0
-    playerData.lives = data.lives or 3
-    
-    -- Update personal best
-    if playerData.currentScore > playerData.personalBest then
-        playerData.personalBest = playerData.currentScore
+    if announcement_timer >= announcement_interval then
+        local stats = traffic_server:get_stats()
         
-        -- Broadcast new personal best to all players
-        local broadcastData = {
-            type = "personalBest",
-            playerName = playerData.playerName,
-            score = playerData.personalBest
-        }
-        
-        broadcastToAllPlayers(broadcastData)
-        
-        ac.log("Traffic Server: " .. playerData.playerName .. " achieved new personal best: " .. playerData.personalBest)
-    end
-end
-
--- Handle collision events
-function handleCollision(carID, data)
-    local playerData = serverData.playerScores[carID]
-    if not playerData then return end
-    
-    playerData.collisions = playerData.collisions + 1
-    
-    -- Log collision for server statistics
-    ac.log("Traffic Server: Player " .. playerData.playerName .. " collision #" .. playerData.collisions)
-end
-
--- Send leaderboard to specific player
-function sendLeaderboard(carID)
-    local leaderboardData = {
-        type = "leaderboard",
-        data = {}
-    }
-    
-    for i = 1, math.min(10, #serverData.leaderboard) do
-        local entry = serverData.leaderboard[i]
-        table.insert(leaderboardData.data, {
-            position = i,
-            name = entry.name,
-            score = entry.score,
-            isActive = entry.lives > 0
-        })
-    end
-    
-    ac.sendClientMessage(carID, ac.formatJSON(leaderboardData))
-end
-
--- Broadcast message to all connected players
-function broadcastToAllPlayers(data)
-    local jsonData = ac.formatJSON(data)
-    
-    for carID, playerData in pairs(serverData.playerScores) do
-        if playerData.connected then
-            ac.sendClientMessage(carID, jsonData)
-        end
-    end
-end
-
--- Handle server commands (admin functions)
-function script.serverCommand(command, args)
-    if command == "traffic_stats" then
-        local stats = string.format(
-            "Traffic Server Stats:\n" ..
-            "- Total Players: %d\n" ..
-            "- Active Players: %d\n" ..
-            "- Session Time: %d minutes\n" ..
-            "- Top Score: %.0f",
-            serverData.serverStats.totalPlayers,
-            countActivePlayers(),
-            math.floor((os.time() - serverData.serverStats.sessionStartTime) / 60),
-            getTopScore()
-        )
-        
-        ac.log(stats)
-        return stats
-        
-    elseif command == "traffic_reset" then
-        -- Reset all player scores (admin command)
-        for carID, playerData in pairs(serverData.playerScores) do
-            if playerData.connected then
-                local resetData = {
-                    type = "serverReset",
-                    message = "Server admin has reset all scores"
-                }
-                ac.sendClientMessage(carID, ac.formatJSON(resetData))
-            end
+        if stats.active_sessions > 0 then
+            local announcement = string.format(
+                "Server Stats | Players: %d | Traffic Sessions: %d | Cars: %d | Use Ctrl+T for traffic UI",
+                stats.active_sessions,
+                stats.traffic_sessions,
+                stats.total_traffic_cars
+            )
+            
+            broadcast_to_clients("SERVER_STATS", announcement)
         end
         
-        -- Reset server data
-        for carID, playerData in pairs(serverData.playerScores) do
-            playerData.currentScore = 0
-            playerData.personalBest = 0
-            playerData.lives = 3
-            playerData.collisions = 0
-        end
-        
-        return "All player scores have been reset"
-        
-    elseif command == "traffic_kick_idle" then
-        -- Kick players with 0 score after 10 minutes (admin command)
-        local kickedCount = 0
-        local currentTime = os.time()
-        
-        for carID, playerData in pairs(serverData.playerScores) do
-            if playerData.connected and 
-               playerData.personalBest == 0 and 
-               playerData.sessionTime > 600 then
-                
-                ac.kickUser(carID)
-                kickedCount = kickedCount + 1
-            end
-        end
-        
-        return "Kicked " .. kickedCount .. " idle players"
+        announcement_timer = 0
     end
 end
 
--- Helper function to count active players
-function countActivePlayers()
-    local count = 0
-    for carID, playerData in pairs(serverData.playerScores) do
-        if playerData.connected and playerData.lives > 0 then
-            count = count + 1
-        end
-    end
-    return count
+-- Add periodic announcements to update loop
+local original_update = script.update
+script.update = function(dt)
+    original_update(dt)
+    script.periodicAnnouncements(dt)
 end
 
--- Helper function to get top score
-function getTopScore()
-    local topScore = 0
-    for carID, playerData in pairs(serverData.playerScores) do
-        if playerData.personalBest > topScore then
-            topScore = playerData.personalBest
-        end
+-- Server command interface
+function script.onServerCommand(command, args)
+    if command == "traffic_status" then
+        local stats = traffic_server:get_stats()
+        log_server("=== Traffic Server Status ===")
+        log_server("Active Sessions: " .. stats.active_sessions)
+        log_server("Traffic Sessions: " .. stats.traffic_sessions)
+        log_server("Total Traffic Cars: " .. stats.total_traffic_cars)
+        log_server("Server Uptime: " .. stats.server_uptime .. "s")
+        log_server("Traffic Enabled: " .. tostring(stats.traffic_enabled))
+        return true
+        
+    elseif command == "traffic_clear_all" then
+        sync_data.traffic_cars = {}
+        broadcast_to_clients("ALL_TRAFFIC_CLEARED", "")
+        log_server("All traffic cleared by server command")
+        return true
+        
+    elseif command == "traffic_reload" then
+        traffic_server:init()
+        log_server("Traffic system reloaded")
+        return true
     end
-    return topScore
-end
-
--- Periodic announcements
-local lastAnnouncement = 0
-function script.update(dt)
-    updateServerLogic(dt)
-    updateLeaderboard()
     
-    -- Send periodic leaderboard updates every 30 seconds
-    local currentTime = os.time()
-    if currentTime - lastAnnouncement > 30 then
-        broadcastLeaderboardUpdate()
-        lastAnnouncement = currentTime
-    end
+    return false
 end
 
--- Broadcast leaderboard update to all players
-function broadcastLeaderboardUpdate()
-    if #serverData.leaderboard > 0 then
-        local updateData = {
-            type = "leaderboardUpdate",
-            topPlayer = serverData.leaderboard[1].name,
-            topScore = serverData.leaderboard[1].score,
-            totalPlayers = countActivePlayers()
-        }
-        
-        broadcastToAllPlayers(updateData)
-    end
-end
+log_server("Traffic Server Script loaded successfully")
