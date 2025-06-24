@@ -392,29 +392,29 @@ function script.update(dt)
     -- Process other cars (traffic and overtakes)
     for i = 2, sim.carsCount do
         local car = ac.getCarState(i)
-        local state = carsState[i]
+        local carState = carsState[i]
         
         if not car.active then
-            state.overtaken = false
-            state.collided = false
-            state.drivingAlong = false
-            state.nearMiss = false
-            state.maxPosDot = -1
-        elseif car.pos:closerToThan(player.position, 100) then
+            carState.overtaken = false
+            carState.collided = false
+            carState.drivingAlong = false
+            carState.nearMiss = false
+            carState.maxPosDot = -1
+        elseif car.position:closerToThan(player.position, 100) then
             -- Car is within range to process
             
             -- Check for collisions
             if car.collidedWith == 1 then
-                state.collided = true
+                carState.collided = true
                 addMessage("COLLISION!", colors.danger)
             end
             
-            if not state.overtaken and not state.collided and state.drivingAlong then
+            if not carState.overtaken and not carState.collided and carState.drivingAlong then
                 local posDir = (car.position - player.position):normalize()
-                local posDot = math.dot(posDir, car.look)
-                state.maxPosDot = math.max(state.maxPosDot, posDot)
+                local posDot = math.dot(posDir, car.lookAhead)
+                carState.maxPosDot = math.max(carState.maxPosDot, posDot)
                 
-                if posDot < -0.5 and state.maxPosDot > 0.5 then
+                if posDot < -0.5 and carState.maxPosDot > 0.5 then
                     -- Overtake detected!
                     state.currentScore = state.currentScore + math.ceil(player.speedKmh/10 * state.multipliers.combo)
                     state.multipliers.combo = state.multipliers.combo + 1
@@ -426,8 +426,8 @@ function script.update(dt)
                         mediaPlayers.sfx:play()
                     end
                     
-                    addMessage('Overtake 1x', state.multipliers.combo > 50 and 1 or 0)
-                    state.overtaken = true
+                    addMessage('Overtake 1x', state.multipliers.combo > 50 and colors.accent or colors.text)
+                    carState.overtaken = true
                     
                     -- Check for close pass (near miss)
                     if car.position:closerToThan(player.position, 3) then
@@ -446,11 +446,11 @@ function script.update(dt)
                 end
             end
         else
-            state.maxPosDot = -1
-            state.overtaken = false
-            state.collided = false
-            state.drivingAlong = true
-            state.nearMiss = false
+            carState.maxPosDot = -1
+            carState.overtaken = false
+            carState.collided = false
+            carState.drivingAlong = true
+            carState.nearMiss = false
         end
     end
     
