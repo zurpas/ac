@@ -45,12 +45,12 @@ local state = {
 
 -- Sound effects
 local sounds = {
-    collision = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011172641878016/killingSpree.mp3',
-    scoreUp = 'https://cdn.discordapp.com/attachments/140183723348852736/1000988999877394512/pog_noti_sound.mp3',
-    newPB = 'https://www.myinstants.com/media/sounds/holy-shit.mp3',
-    laneChange = 'https://cdn.discordapp.com/attachments/140183723348852736/1000988999877394512/pog_noti_sound.mp3',
-    warning = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011171236782160/inconceivable.mp3',
-    gameOver = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011170574094376/unfriggenbelievable.mp3',
+    collision = "https://cdn.discordapp.com/attachments/140183723348852736/1001011172641878016/killingSpree.mp3",
+    scoreUp = "https://cdn.discordapp.com/attachments/140183723348852736/1000988999877394512/pog_noti_sound.mp3",
+    newPB = "https://www.myinstants.com/media/sounds/holy-shit.mp3",
+    laneChange = "https://cdn.discordapp.com/attachments/140183723348852736/1000988999877394512/pog_noti_sound.mp3",
+    warning = "https://cdn.discordapp.com/attachments/140183723348852736/1001011171236782160/inconceivable.mp3",
+    gameOver = "https://cdn.discordapp.com/attachments/140183723348852736/1001011170574094376/unfriggenbelievable.mp3",
 }
 
 -- Media players
@@ -92,19 +92,19 @@ local timeouts = {}
 
 -- Messages
 local CloseMessages = {
-    'Extremely Close!',
-    'Untouchable!',
-    'Godlike...',
-    'Legitness!'
+    "Extremely Close!",
+    "Untouchable!",
+    "Godlike...",
+    "Legitness!"
 }
 
 local MackMessages = {
-    'L A M E',
-    'Who Taught You How To Drive?!?',
-    'Learn To Drive...',
-    'Seriously?!?',
-    'T E R R I B L E',
-    'How Did You Get A License???'
+    "L A M E",
+    "Who Taught You How To Drive?!?",
+    "Learn To Drive...",
+    "Seriously?!?",
+    "T E R R I B L E",
+    "How Did You Get A License???"
 }
 
 -- Traffic cars state
@@ -281,7 +281,7 @@ function script.update(dt)
     if player.speedKmh < config.minimumSpeed then
         if state.dangerouslySlowTimer > 3 then
             -- Reset score after 3 seconds of slow speed
-            ac.console('Traffic Rush: ' .. state.currentScore)
+            ac.console("Traffic Rush: " .. state.currentScore)
             
             -- Update personal best if needed
             if state.currentScore > state.personalBest then
@@ -291,7 +291,7 @@ function script.update(dt)
                     mediaPlayers.sfx:setVolume(0.5)
                     mediaPlayers.sfx:play()
                 end
-                ac.sendChatMessage('Traffic Rush: New PB! ' .. state.personalBest)
+                ac.sendChatMessage("Traffic Rush: New PB! " .. state.personalBest)
             end
             
             -- Reset state
@@ -301,13 +301,13 @@ function script.update(dt)
         else
             if state.dangerouslySlowTimer < 3 then
                 if speedMessageTimer > 5 and timePassed > 1 then
-                    addMessage('3 Seconds until score reset!', colors.warning)
+                    addMessage("3 Seconds until score reset!", colors.warning)
                     speedMessageTimer = 0
                 end
             end
             
             if state.dangerouslySlowTimer == 0 and timePassed > 1 then
-                addMessage('Speed up!', colors.warning)
+                addMessage("Speed up!", colors.warning)
             end
         end
         
@@ -366,7 +366,7 @@ function script.update(dt)
                     mediaPlayers.alerts:setVolume(0.8)
                     mediaPlayers.alerts:play()
                 end
-                ac.sendChatMessage('Traffic Rush: New PB! ' .. state.personalBest)
+                ac.sendChatMessage("Traffic Rush: New PB! " .. state.personalBest)
             end
             
             -- Reset state
@@ -426,7 +426,7 @@ function script.update(dt)
                         mediaPlayers.sfx:play()
                     end
                     
-                    addMessage('Overtake 1x', state.multipliers.combo > 50 and colors.accent or colors.text)
+                    addMessage("Overtake 1x", state.multipliers.combo > 50 and colors.accent or colors.text)
                     carState.overtaken = true
                     
                     -- Check for close pass (near miss)
@@ -631,15 +631,16 @@ function drawMainPanel()
     -- Draw score
     ui.setCursor(vec2(startX + 10, startY + boxHeight + 5))
     ui.pushFont(ui.Font.Title)
+    local scoreText = string.format("%d PTS", state.currentScore)
     if state.isPB then
-        ui.textColored(string.format("%d PTS", state.currentScore), colors.pb)
+        ui.textColored(scoreText, colors.pb)
     else
-        ui.text(string.format("%d PTS", state.currentScore))
+        ui.text(scoreText)
     end
     ui.popFont()
     
     ui.endTransparentWindow()
-end
+}
 
 -- Draw PB panel
 function drawPBPanel()
@@ -694,7 +695,7 @@ function drawPBPanel()
     ui.popFont()
     
     ui.endTransparentWindow()
-end
+}
 
 -- Draw multiplier box
 function drawMultiplierBox(pos, width, height, label, value, bgColor)
@@ -712,7 +713,7 @@ function drawMultiplierBox(pos, width, height, label, value, bgColor)
     ui.pushFont(ui.Font.Normal)
     ui.text(value)
     ui.popFont()
-end
+}
 
 -- Draw messages panel
 function drawMessagesPanel(position)
@@ -748,7 +749,7 @@ function drawMessagesPanel(position)
     end
     
     ui.endTransparentWindow()
-end
+}
 
 -- Draw animations
 function drawAnimations()
