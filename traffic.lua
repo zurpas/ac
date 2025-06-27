@@ -1,85 +1,186 @@
--- Assetto Corsa Traffic Server Script - Final Version
--- CSP Compatible - No Hesi Style Traffic Server
--- Version 3.0.0 - Clean implementation with proper CSP API
+-- traffic_complete.lua
+-- Complete traffic scoring system with integrated animations
+-- Author: Enhanced with AI assistance
+-- Version: 2.0
 
--- Global variables
-local initialized = false
-local frameCount = 0
+-- ========== CONFIGURATION ==========
 
--- Player data
-local playerData = {
-    score = 0,
-    personalBest = 0,
-    lives = 3,
-    lastCollisionTime = 0,
-    speedMultiplier = 1.0,
-    proximityMultiplier = 1.0,
-    comboMultiplier = 1.0,
-    comboCount = 0,
-    lastSpeed = 0,
-    lanesUsed = {},
-    nearMissCount = 0,
-    collisionCount = 0,
-    sessionStartTime = 0,
-    lastScoreTime = 0
-}
+local requiredSpeed = 95
+local scoreThreshold = 100  -- Score change threshold to trigger animation
 
--- UI state
-local uiState = {
-    showMainUI = true,
-    showPopup = false,
-    popupText = "",
-    popupType = "info",
-    popupStartTime = 0,
-    popupDuration = 3.0,
-    scoreAnimation = {
-        active = false,
-        startTime = 0,
-        duration = 1.0,
-        startValue = 0,
-        endValue = 0
-    },
-    pbAnimation = {
-        active = false,
-        startTime = 0,
-        duration = 2.0,
-        scale = 1.0
-    }
-}
+-- Sound URLs (replace with your own)
+local PBlink = 'https://www.myinstants.com/media/sounds/holy-shit.mp3'
+local killingSpree = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011172641878016/killingSpree.mp3'
+local killingFrenzy = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011172335702096/KillingFrenzy.mp3'
+local runningRiot = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011170272100352/RunningRiot.mp3'
+local rampage = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011169944932453/Rampage.mp3'
+local untouchable = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011170959954060/untouchable.mp3'
+local invincible = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011171974983710/invincible.mp3'
+local inconcievable = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011171236782160/inconceivable.mp3'
+local unfriggenbelievable = 'https://cdn.discordapp.com/attachments/140183723348852736/1001011170574094376/unfriggenbelievable.mp3'
+local noti = 'https://cdn.discordapp.com/attachments/140183723348852736/1000988999877394512/pog_noti_sound.mp3'
 
--- Colors using rgbm format
+-- ========== CENTRALIZED COLOR PALETTE ==========
+-- All colors sourced from this central table for easy theme tweaks
+
 local colors = {
+    -- Base colors
     background = rgbm(0.1, 0.1, 0.1, 0.95),
-    primary = rgbm(0.6, 0.4, 1.0, 1.0),
+    dark = rgbm(0.4, 0.4, 0.4, 1),
+    grey = rgbm(0.7, 0.7, 0.7, 1),
+    
+    -- Status colors
     success = rgbm(0.2, 0.8, 0.2, 1.0),
     warning = rgbm(1.0, 0.6, 0.0, 1.0),
     error = rgbm(1.0, 0.2, 0.2, 1.0),
+    info = rgbm(0.4, 0.7, 1.0, 1.0),
+    
+    -- Text colors
     text = rgbm(1.0, 1.0, 1.0, 1.0),
     textDim = rgbm(0.7, 0.7, 0.7, 1.0),
-    accent = rgbm(0.0, 0.8, 1.0, 1.0)
+    textBright = rgbm(1.2, 1.2, 1.2, 1.0),
+    
+    -- PB flash colors
+    pbNormal = rgbm(0.7, 0.7, 0.7, 1.0),
+    pbFlash = rgbm(1.0, 0.8, 0.2, 1.0),
+    pbFlashBright = rgbm(1.2, 1.0, 0.4, 1.0),
+    
+    -- Combo colors (dynamic based on combo level)
+    comboLow = rgbm(0.8, 0.8, 0.8, 1.0),
+    comboMed = rgbm(0.2, 0.8, 1.0, 1.0),
+    comboHigh = rgbm(1.0, 0.4, 0.8, 1.0),
+    comboInsane = rgbm(1.0, 0.2, 0.2, 1.0),
+    
+    -- Score animation colors
+    scoreNormal = rgbm(0.0, 0.8, 1.0, 1.0),
+    scoreAnimating = rgbm(0.4, 1.0, 0.6, 1.0),
+    
+    -- Message colors
+    messageDefault = rgbm(1, 1, 1, 1),
+    messageSuccess = rgbm(0, 1, 0, 1),
+    messageError = rgbm(1, 0, 0, 1),
+    messageSpecial = rgbm(1, 0.84, 0, 1)
 }
 
--- Utility functions
-local function lerp(a, b, t)
-    return a + (b - a) * math.max(0, math.min(1, t))
+-- ========== EASING FUNCTIONS ==========
+
+local Easing = {}
+
+function Easing.linear(t)
+    return t
 end
 
-local function easeOutQuart(t)
-    return 1 - math.pow(1 - t, 4)
+function Easing.quadOut(t)
+    return 1 - (1 - t) * (1 - t)
 end
 
-local function easeInOutCubic(t)
+function Easing.cubicInOut(t)
     return t < 0.5 and 4 * t * t * t or 1 - math.pow(-2 * t + 2, 3) / 2
 end
 
-local function formatTime(seconds)
-    local minutes = math.floor(seconds / 60)
-    local secs = math.floor(seconds % 60)
-    return string.format("%02d:%02d", minutes, secs)
+function Easing.quartOut(t)
+    return 1 - math.pow(1 - t, 4)
 end
 
-local function formatScore(score)
-    local scoreInt = math.floor(score)
+function Easing.sineInOut(t)
+    return -(math.cos(math.pi * t) - 1) / 2
+end
+
+-- ========== ANIMATION CLASSES ==========
+
+-- Tween class for number interpolation
+local Tween = {}
+Tween.__index = Tween
+
+function Tween:number(start, goal, duration, easingFn)
+    local tween = {
+        startValue = start,
+        goalValue = goal,
+        duration = duration,
+        easingFunction = easingFn or Easing.linear,
+        startTime = os.clock(),
+        isComplete = false,
+        currentValue = start
+    }
+    setmetatable(tween, Tween)
+    return tween
+end
+
+function Tween:getValue()
+    if self.isComplete then
+        return self.goalValue
+    end
+    
+    local currentTime = os.clock()
+    local elapsed = currentTime - self.startTime
+    local progress = math.min(elapsed / self.duration, 1.0)
+    
+    if progress >= 1.0 then
+        self.isComplete = true
+        self.currentValue = self.goalValue
+        return self.goalValue
+    end
+    
+    local easedProgress = self.easingFunction(progress)
+    self.currentValue = self.startValue + (self.goalValue - self.startValue) * easedProgress
+    return self.currentValue
+end
+
+function Tween:isFinished()
+    return self.isComplete
+end
+
+-- AnimatedNumber class for score counters
+local AnimatedNumber = {}
+AnimatedNumber.__index = AnimatedNumber
+
+function AnimatedNumber:new(initialValue, animationDuration, easingFn)
+    local animNum = {
+        targetValue = initialValue or 0,
+        displayValue = initialValue or 0,
+        animationDuration = animationDuration or 1.0,
+        easingFunction = easingFn or Easing.quadOut,
+        tween = nil,
+        isAnimating = false,
+        useCommaFormatting = true
+    }
+    setmetatable(animNum, AnimatedNumber)
+    return animNum
+end
+
+function AnimatedNumber:setTarget(newValue)
+    if newValue == self.targetValue then
+        return -- No change needed
+    end
+    
+    -- Start new tween from current display value to new target
+    self.tween = Tween:number(self.displayValue, newValue, self.animationDuration, self.easingFunction)
+    self.targetValue = newValue
+    self.isAnimating = true
+end
+
+function AnimatedNumber:update(dt)
+    if self.isAnimating and self.tween then
+        self.displayValue = self.tween:getValue()
+        
+        if self.tween:isFinished() then
+            self.isAnimating = false
+            self.displayValue = self.targetValue
+            self.tween = nil
+        end
+    end
+end
+
+function AnimatedNumber:getValue()
+    return self.displayValue
+end
+
+function AnimatedNumber:getFormattedValue()
+    if not self.useCommaFormatting then
+        return tostring(math.floor(self.displayValue))
+    end
+    
+    local scoreInt = math.floor(self.displayValue)
     local str = tostring(scoreInt)
     local len = string.len(str)
     local result = ""
@@ -93,382 +194,721 @@ local function formatScore(score)
     return result
 end
 
--- Storage functions
-local function savePlayerData()
-    ac.storage.score = playerData.score
-    ac.storage.personalBest = playerData.personalBest
-    ac.storage.lives = playerData.lives
-    ac.storage.collisionCount = playerData.collisionCount
+function AnimatedNumber:isAnimatingValue()
+    return self.isAnimating
 end
 
-local function loadPlayerData()
-    playerData.score = ac.storage.score or 0
-    playerData.personalBest = ac.storage.personalBest or 0
-    playerData.lives = ac.storage.lives or 3
-    playerData.collisionCount = ac.storage.collisionCount or 0
-    playerData.sessionStartTime = os.clock()
+-- ========== GAME STATE VARIABLES ==========
+
+-- Media players
+local mediaPlayer = ui.MediaPlayer()
+local mediaPlayer2 = ui.MediaPlayer()
+local mediaPlayer3 = ui.MediaPlayer()
+
+-- Audio state flags
+local hasPlayedSpree = false
+local hasPlayedFrenzy = false
+local hasPlayedRiot = false
+local hasPlayedRampage = false
+local hasPlayedUntouchable = false
+local hasPlayedInvincible = false
+local hasPlayedInconcievable = false
+local hasPlayedUnfriggenbelievable = false
+
+-- Game state
+local timePassed = 0
+local speedMessageTimer = 0
+local mackMessageTimer = 0
+local totalScore = 0
+local animatedScore = AnimatedNumber:new(0, 1.5, Easing.quartOut)
+local lastScore = 0
+
+local comboMeter = 1
+local comboColor = 0
+local animatedCombo = AnimatedNumber:new(1, 0.8, Easing.cubicInOut)
+
+local dangerouslySlowTimer = 0
+local carsState = {}
+local wheelsWarningTimeout = 0
+local personalBest = 0
+local animatedPB = AnimatedNumber:new(0, 1.0, Easing.quadOut)
+local lastPB = 0
+
+-- PB Flash animation state
+local pbFlashAnimation = {
+    active = false,
+    startTime = 0,
+    duration = 2.0,
+    scale = 1.0,
+    colorPhase = 0
+}
+
+-- UI state
+local uiCustomPos = vec2(900, 70)
+local uiMoveMode = false
+local lastUiMoveKeyState = false
+local muteToggle = false
+local lastMuteKeyState = false
+local messageState = false
+
+-- Speed warning state
+local speedWarning = 0
+local UIToggle = true
+local LastKeyState = false
+
+-- Messages and effects
+local messages = {}
+local glitter = {}
+local glitterCount = 0
+
+local MackMessages = { 'L A M E', 'Who Taught You How To Drive?!?', 'Learn To Drive...', 'Seriously?!?', 'T E R R I B L E', 'How Did You Get A License???' }
+local CloseMessages = { 'Extremely Close...', 'Untouchable :o', 'Godlike...', 'Legitnessss' }
+
+-- ========== HELPER FUNCTIONS ==========
+
+function script.prepare(dt)
+    return ac.getCarState(1).speedKmh > 60
 end
 
--- Game logic functions
-local function detectLane(position)
-    local laneWidth = 3.5
-    local lane = math.floor((position.x + 50) / laneWidth)
-    return math.max(1, math.min(8, lane))
+-- Trigger PB Flash animation
+local function triggerPBFlash()
+    pbFlashAnimation.active = true
+    pbFlashAnimation.startTime = os.clock()
+    pbFlashAnimation.scale = 1.0
+    pbFlashAnimation.colorPhase = 0
 end
 
-local function calculateSpeedMultiplier(speed)
-    local speedKmh = speed * 3.6
-    if speedKmh < 30 then
-        return 0.1
-    elseif speedKmh < 60 then
-        return 0.5
-    elseif speedKmh < 80 then
-        return 0.8
-    elseif speedKmh < 120 then
-        return 1.0 + (speedKmh - 80) / 40 * 0.5
+-- Get combo color based on combo value
+local function getComboColor(combo)
+    if combo < 10 then
+        return colors.comboLow
+    elseif combo < 50 then
+        return colors.comboMed
+    elseif combo < 100 then
+        return colors.comboHigh
     else
-        return 1.5 - (speedKmh - 120) / 50 * 0.3
+        return colors.comboInsane
     end
 end
 
-local function calculateProximityMultiplier()
-    local car = ac.getCar(0)
-    if not car then return 1.0 end
+-- Get combo color with HSV animation
+local function getAnimatedComboColor(combo, time)
+    local baseHue = comboColor + time * 10 * combo
+    while baseHue > 360 do baseHue = baseHue - 360 end
     
-    local playerPos = car.position
-    local closestDistance = math.huge
-    local nearbyCount = 0
-    local sim = ac.getSim()
+    local saturation = math.saturate(combo / 10)
+    local value = 1.0
+    local alpha = math.saturate(combo / 4)
     
-    for i = 1, sim.carsCount - 1 do
-        local otherCar = ac.getCar(i)
-        if otherCar and otherCar.isConnected then
-            local distance = playerPos:distance(otherCar.position)
-            if distance < 50 then
-                nearbyCount = nearbyCount + 1
-                closestDistance = math.min(closestDistance, distance)
+    return rgbm.new(hsv(baseHue, saturation, value):rgb(), alpha)
+end
+
+-- Add message to the message queue (refactored to use color palette)
+function addMessage(text, mood)
+    for i = math.min(#messages + 1, 4), 2, -1 do
+        messages[i] = messages[i - 1]
+        messages[i].targetPos = i
+    end
+    messages[1] = { text = text, age = 0, targetPos = 1, currentPos = 1, mood = mood }
+    
+    if mood == 1 then
+        for i = 1, 60 do
+            local dir = vec2(math.random() - 0.5, math.random() - 0.5)
+            glitterCount = glitterCount + 1
+            glitter[glitterCount] = {
+                color = rgbm.new(hsv(math.random() * 360, 1, 1):rgb(), 1),
+                pos = vec2(80, 140) + dir * vec2(40, 20),
+                velocity = dir:normalize():scale(0.2 + math.random()),
+                life = 0.5 + 0.5 * math.random()
+            }
+        end
+    end
+end
+
+-- Update messages and effects
+local function updateMessages(dt)
+    comboColor = comboColor + dt * 10 * comboMeter
+    if comboColor > 360 then comboColor = comboColor - 360 end
+    
+    for i = 1, #messages do
+        local m = messages[i]
+        m.age = m.age + dt
+        m.currentPos = math.applyLag(m.currentPos, m.targetPos, 0.8, dt)
+    end
+    
+    for i = glitterCount, 1, -1 do
+        local g = glitter[i]
+        g.pos:add(g.velocity)
+        g.velocity.y = g.velocity.y + 0.02
+        g.life = g.life - dt
+        g.color.mult = math.saturate(g.life * 4)
+        if g.life < 0 then
+            if i < glitterCount then
+                glitter[i] = glitter[glitterCount]
             end
+            glitterCount = glitterCount - 1
         end
     end
     
-    if nearbyCount == 0 then return 1.0 end
-    
-    local proximityBonus = 1.0
-    if closestDistance > 5 and closestDistance < 20 then
-        proximityBonus = 1.0 + (20 - closestDistance) / 15 * 0.8
-    elseif closestDistance <= 5 then
-        proximityBonus = 0.5
-    end
-    
-    return proximityBonus * (1.0 + nearbyCount * 0.1)
-end
-
-local function detectNearMiss()
-    local car = ac.getCar(0)
-    if not car then return false end
-    
-    local playerPos = car.position
-    local playerVel = car.velocity
-    local sim = ac.getSim()
-    
-    for i = 1, sim.carsCount - 1 do
-        local otherCar = ac.getCar(i)
-        if otherCar and otherCar.isConnected then
-            local distance = playerPos:distance(otherCar.position)
-            local relativeVel = playerVel:distance(otherCar.velocity)
-            
-            if distance < 8 and distance > 3 and relativeVel > 5 then
-                return true
-            end
+    if comboMeter > 10 and math.random() > 0.98 then
+        for i = 1, math.floor(comboMeter) do
+            local dir = vec2(math.random() - 0.5, math.random() - 0.5)
+            glitterCount = glitterCount + 1
+            glitter[glitterCount] = {
+                color = rgbm.new(hsv(math.random() * 360, 1, 1):rgb(), 1),
+                pos = vec2(195, 75) + dir * vec2(40, 20),
+                velocity = dir:normalize():scale(0.2 + math.random()),
+                life = 0.5 + 0.5 * math.random()
+            }
         end
     end
-    
-    return false
 end
 
-local function detectCollision()
-    local car = ac.getCar(0)
-    if not car then return false end
-    
-    local currentTime = os.clock()
-    local timeSinceLastCollision = currentTime - playerData.lastCollisionTime
-    
-    local currentSpeed = car.speedKmh
-    local speedDelta = math.abs(currentSpeed - playerData.lastSpeed)
-    if speedDelta > 30 and timeSinceLastCollision > 2.0 then
-        return true
-    end
-    
-    return false
-end
-
--- Popup system
-local function showPopup(text, type)
-    uiState.showPopup = true
-    uiState.popupText = text
-    uiState.popupType = type or "info"
-    uiState.popupStartTime = os.clock()
-end
-
--- Sound function
-local function playSound(soundType)
-    ac.log("Playing sound: " .. soundType)
-end
-
--- Main update function
-local function updateScore(dt)
-    local car = ac.getCar(0)
-    if not car or not car.isConnected then return end
-    
-    local currentTime = os.clock()
-    local position = car.position
-    local velocity = car.velocity
-    local speed = velocity:length()
-    
-    -- Update multipliers
-    playerData.speedMultiplier = calculateSpeedMultiplier(speed)
-    playerData.proximityMultiplier = calculateProximityMultiplier()
-    
-    -- Lane diversity tracking
-    local currentLane = detectLane(position)
-    playerData.lanesUsed[currentLane] = true
-    local uniqueLanes = 0
-    for _ in pairs(playerData.lanesUsed) do
-        uniqueLanes = uniqueLanes + 1
-    end
-    
-    local laneBonus = uniqueLanes >= 3 and 1.2 or 1.0
-    
-    -- Near miss detection
-    if detectNearMiss() then
-        playerData.nearMissCount = playerData.nearMissCount + 1
-        playerData.comboCount = playerData.comboCount + 1
-        showPopup("NEAR MISS! +" .. math.floor(50 * playerData.comboMultiplier), "success")
-    end
-    
-    -- Combo multiplier
-    playerData.comboMultiplier = 1.0 + (playerData.comboCount * 0.1)
-    
-    -- Score calculation
-    local baseScore = speed * 0.5
-    local totalMultiplier = playerData.speedMultiplier * playerData.proximityMultiplier * 
-                           playerData.comboMultiplier * laneBonus
-    
-    local scoreGain = baseScore * totalMultiplier * dt
-    local oldScore = playerData.score
-    playerData.score = playerData.score + scoreGain
-    
-    -- Animate score change
-    if scoreGain > 0 and currentTime - playerData.lastScoreTime > 0.1 then
-        uiState.scoreAnimation.active = true
-        uiState.scoreAnimation.startTime = currentTime
-        uiState.scoreAnimation.startValue = oldScore
-        uiState.scoreAnimation.endValue = playerData.score
-        playerData.lastScoreTime = currentTime
-    end
-    
-    -- Check for new personal best
-    if playerData.score > playerData.personalBest then
-        playerData.personalBest = playerData.score
-        uiState.pbAnimation.active = true
-        uiState.pbAnimation.startTime = currentTime
-        showPopup("NEW PERSONAL BEST!", "success")
-        playSound("newRecord")
-        savePlayerData()
-    end
-    
-    -- Store current values for next frame
-    playerData.lastSpeed = speed
-end
-
--- Collision handler
-local function handleCollision()
-    local currentTime = os.clock()
-    playerData.lastCollisionTime = currentTime
-    playerData.collisionCount = playerData.collisionCount + 1
-    playerData.comboCount = 0
-    
-    local penalty = 0
-    local message = ""
-    
-    if playerData.lives == 3 then
-        penalty = playerData.score * 0.05
-        message = "COLLISION! -5% SCORE"
-        playerData.lives = 2
-    elseif playerData.lives == 2 then
-        penalty = playerData.score * 0.15
-        message = "COLLISION! -15% SCORE"
-        playerData.lives = 1
-    else
-        penalty = playerData.score
-        message = "COLLISION! SCORE RESET"
-        playerData.lives = 3
-        playerData.lanesUsed = {}
-    end
-    
-    playerData.score = math.max(0, playerData.score - penalty)
-    showPopup(message, "error")
-    playSound("collision")
-    savePlayerData()
-end
-
--- Animation update
+-- Update all animations
 local function updateAnimations(dt)
-    local currentTime = os.clock()
+    -- Update animated numbers
+    animatedScore:update(dt)
+    animatedPB:update(dt)
+    animatedCombo:update(dt)
     
-    -- Score animation
-    if uiState.scoreAnimation.active then
-        local elapsed = currentTime - uiState.scoreAnimation.startTime
-        local progress = elapsed / uiState.scoreAnimation.duration
+    -- Update PB flash animation
+    if pbFlashAnimation.active then
+        local currentTime = os.clock()
+        local elapsed = currentTime - pbFlashAnimation.startTime
+        local progress = elapsed / pbFlashAnimation.duration
         
         if progress >= 1.0 then
-            uiState.scoreAnimation.active = false
-        end
-    end
-    
-    -- PB animation
-    if uiState.pbAnimation.active then
-        local elapsed = currentTime - uiState.pbAnimation.startTime
-        local progress = elapsed / uiState.pbAnimation.duration
-        
-        if progress >= 1.0 then
-            uiState.pbAnimation.active = false
-            uiState.pbAnimation.scale = 1.0
+            pbFlashAnimation.active = false
+            pbFlashAnimation.scale = 1.0
+            pbFlashAnimation.colorPhase = 0
         else
-            local easedProgress = easeInOutCubic(progress)
-            uiState.pbAnimation.scale = 1.0 + math.sin(easedProgress * math.pi) * 0.3
-        end
-    end
-    
-    -- Popup timeout
-    if uiState.showPopup then
-        local elapsed = currentTime - uiState.popupStartTime
-        if elapsed >= uiState.popupDuration then
-            uiState.showPopup = false
+            -- Scale animation with bounce effect
+            local scaleCurve = math.sin(progress * math.pi)
+            pbFlashAnimation.scale = 1.0 + scaleCurve * 0.4
+            
+            -- Color phase for flashing
+            pbFlashAnimation.colorPhase = progress * 4  -- 4 cycles during animation
         end
     end
 end
 
--- Main CSP function
-function script.windowMain(dt)
-    if not initialized then
+-- ========== MAIN UPDATE FUNCTION ==========
+
+function script.update(dt)
+    -- UI movement controls
+    local uiMoveKeyState = ac.isKeyDown(ac.KeyIndex.B)
+    if uiMoveKeyState and lastUiMoveKeyState ~= uiMoveKeyState then
+        uiMoveMode = not uiMoveMode
+        lastUiMoveKeyState = uiMoveKeyState
+        if messageState then
+            addMessage('UI Move mode Disabled', -1)
+            messageState = false
+        else
+            addMessage('UI Move mode Enabled', -1)
+            messageState = true
+        end
+    elseif not uiMoveKeyState then
+        lastUiMoveKeyState = false
+    end
+
+    if ui.mouseClicked(ui.MouseButton.Right) then
+        if uiMoveMode then
+            uiCustomPos = ui.mousePos()
+        end
+    end
+
+    -- Mute toggle
+    local muteKeyState = ac.isKeyDown(ac.KeyIndex.M)
+    if muteKeyState and lastMuteKeyState ~= muteKeyState then
+        muteToggle = not muteToggle
+        if messageState then
+            addMessage('Sounds off', -1)
+            messageState = false
+        else
+            addMessage('Sounds on', -1)
+            messageState = true
+        end
+        lastMuteKeyState = muteKeyState
+    elseif not muteKeyState then
+        lastMuteKeyState = false
+    end
+
+    -- Initial messages
+    if timePassed == 0 then
+        addMessage(ac.getCarName(0), 0)
+        addMessage('Made by Boon (Enhanced)', 2)
+        addMessage('(Right-click to move the UI)', -1)
+        addMessage('Driving Fast = More Points', -1)
+        addMessage('We wish you a safe journey :)', -1)
+    end
+
+    local player = ac.getCarState(1)
+    if player.engineLifeLeft < 1 then
+        ac.console('Overtake: ' .. totalScore)
         return
     end
-    
-    frameCount = frameCount + 1
-    
-    -- Update game logic
-    updateScore(dt)
-    
-    -- Check for collisions
-    if detectCollision() then
-        handleCollision()
+
+    local playerPos = player.position
+    local playerDir = ac.getCameraForward()
+    if ac.isKeyDown(ac.KeyIndex.Delete) and player.speedKmh < 15 then
+        physics.setCarPosition(0, playerPos, playerDir)
     end
-    
+
+    timePassed = timePassed + dt
+    speedMessageTimer = speedMessageTimer + dt
+    mackMessageTimer = mackMessageTimer + dt
+
     -- Update animations
     updateAnimations(dt)
-    
-    -- Auto-save every 600 frames (10 seconds at 60fps)
-    if frameCount % 600 == 0 then
-        savePlayerData()
+
+    -- Trigger score animation when score changes significantly
+    if totalScore ~= lastScore then
+        local scoreDiff = math.abs(totalScore - lastScore)
+        if scoreDiff >= scoreThreshold then
+            animatedScore:setTarget(totalScore)
+        end
+        lastScore = totalScore
     end
-    
-    -- Draw main UI
-    if not uiState.showMainUI then return end
-    
-    local currentTime = os.clock()
-    local sessionTime = currentTime - playerData.sessionStartTime
-    
-    ui.setNextWindowPos(vec2(50, 50), ui.Cond.FirstUseEver)
-    ui.setNextWindowSize(vec2(320, 220), ui.Cond.FirstUseEver)
-    
-    if ui.begin("Traffic Score") then
-        -- Time display
-        ui.text("Session: " .. formatTime(sessionTime))
-        ui.separator()
-        
-        -- Score display
-        local scoreText = formatScore(playerData.score)
-        ui.textColored(colors.textDim, "SCORE")
-        ui.textColored(colors.accent, scoreText)
-        
-        -- Personal Best
-        local pbText = "PB: " .. formatScore(playerData.personalBest)
-        if uiState.pbAnimation.active then
-            ui.textColored(colors.success, pbText)
+
+    -- Trigger PB animation when personal best changes
+    if personalBest ~= lastPB and personalBest > lastPB then
+        animatedPB:setTarget(personalBest)
+        triggerPBFlash()
+        lastPB = personalBest
+    end
+
+    -- Update combo animation
+    animatedCombo:setTarget(comboMeter)
+
+    local comboFadingRate = 0.5 * math.lerp(1, 0.1, math.lerpInvSat(player.speedKmh, 80, 200)) + player.wheelsOutside
+    comboMeter = math.max(1, comboMeter - dt * comboFadingRate)
+
+    local sim = ac.getSim()
+    while sim.carsCount > #carsState do
+        carsState[#carsState + 1] = {}
+    end
+
+    -- Wheels outside warning
+    if wheelsWarningTimeout > 0 then
+        wheelsWarningTimeout = wheelsWarningTimeout - dt
+    elseif player.wheelsOutside > 0 then
+        if wheelsWarningTimeout == 0 then
+        end
+        addMessage('Car is Out Of Zone', -1)
+        wheelsWarningTimeout = 60
+    end
+
+    -- Speed check and score reset logic
+    if player.speedKmh < requiredSpeed then
+        if dangerouslySlowTimer > 3 then
+            ac.console('Overtake: ' .. totalScore)
+            comboMeter = 1
+            totalScore = 0
+
+            -- Reset audio flags
+            hasPlayedSpree = false
+            hasPlayedFrenzy = false
+            hasPlayedRiot = false
+            hasPlayedRampage = false
+            hasPlayedUntouchable = false
+            hasPlayedInvincible = false
+            hasPlayedInconcievable = false
+            hasPlayedUnfriggenbelievable = false
         else
-            ui.textColored(colors.textDim, pbText)
+            if dangerouslySlowTimer < 3 then
+                if speedMessageTimer > 5 and not timePassed == 0 then
+                    addMessage('3 Seconds until score reset!', -1)
+                    speedMessageTimer = 0
+                end
+            end
+
+            if dangerouslySlowTimer == 0 and not timePassed == 0 then
+                addMessage('Speed up!', -1)
+            end
         end
         
-        ui.separator()
+        dangerouslySlowTimer = dangerouslySlowTimer + dt
+        comboMeter = 1
         
-        -- Lives display
-        local livesText = "LIVES: "
-        for i = 1, 3 do
-            livesText = livesText .. (i <= playerData.lives and "♥" or "♡")
+        if totalScore > personalBest and dangerouslySlowTimer > 3 then
+            personalBest = totalScore
+            if muteToggle then
+                mediaPlayer:setSource(PBlink)
+                mediaPlayer:setVolume(.5)
+                mediaPlayer:play()
+            else
+                mediaPlayer:setSource(PBlink)
+                mediaPlayer:setVolume(0)
+                mediaPlayer:pause()
+            end
+            ac.sendChatMessage('Overtake: ' .. personalBest)
         end
-        ui.textColored(playerData.lives > 1 and colors.success or colors.error, livesText)
-        
-        ui.separator()
-        
-        -- Multipliers
-        ui.text("Speed: " .. string.format("%.1fx", playerData.speedMultiplier))
-        ui.sameLine()
-        ui.text("Proximity: " .. string.format("%.1fx", playerData.proximityMultiplier))
-        
-        ui.text("Combo: " .. string.format("%.1fx", playerData.comboMultiplier))
-        ui.sameLine()
-        local laneCount = 0
-        for _ in pairs(playerData.lanesUsed) do laneCount = laneCount + 1 end
-        ui.text("Lanes: " .. laneCount)
-        
+        return
+    else
+        dangerouslySlowTimer = 0
     end
-    ui.endWindow()
-    
-    -- Draw popup
-    if uiState.showPopup then
-        local currentTime = os.clock()
-        local elapsed = currentTime - uiState.popupStartTime
-        local progress = elapsed / uiState.popupDuration
-        
-        local alpha = 1.0 - easeInOutCubic(progress)
-        
-        local popupColor = colors.text
-        if uiState.popupType == "success" then
-            popupColor = colors.success
-        elseif uiState.popupType == "warning" then
-            popupColor = colors.warning
-        elseif uiState.popupType == "error" then
-            popupColor = colors.error
+
+    -- Collision check
+    if player.collidedWith == 0 then
+        if totalScore >= personalBest then
+            personalBest = totalScore
+            if muteToggle then
+                mediaPlayer:setSource(PBlink)
+                mediaPlayer:setVolume(.5)
+                mediaPlayer:play()
+            else
+                mediaPlayer:setSource(PBlink)
+                mediaPlayer:setVolume(0)
+                mediaPlayer:pause()
+            end
+            ac.sendChatMessage('Overtake: ' .. personalBest)
         end
-        
-        ui.setNextWindowPos(vec2(200, 100), ui.Cond.Always)
-        ui.setNextWindowSize(vec2(200, 50), ui.Cond.Always)
-        
-        if ui.begin("##Popup", false, bit.bor(ui.WindowFlags.NoTitleBar, ui.WindowFlags.NoResize, ui.WindowFlags.NoMove)) then
-            ui.textColored(rgbm(popupColor.r, popupColor.g, popupColor.b, alpha), uiState.popupText)
+        comboMeter = 1
+        totalScore = 0
+
+        -- Reset audio flags
+        hasPlayedSpree = false
+        hasPlayedFrenzy = false
+        hasPlayedRiot = false
+        hasPlayedRampage = false
+        hasPlayedUntouchable = false
+        hasPlayedInvincible = false
+        hasPlayedInconcievable = false
+        hasPlayedUnfriggenbelievable = false
+
+        if mackMessageTimer > 1 then
+            addMessage(MackMessages[math.random(1, #MackMessages)], -1)
+            mackMessageTimer = 0
         end
-        ui.endWindow()
+    end
+
+    -- Combo-based audio triggers
+    if comboMeter >= 25 then
+        if muteToggle then
+            if not hasPlayedSpree then
+                mediaPlayer2:setSource(killingSpree)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedSpree = true
+            end
+        else
+            mediaPlayer2:setVolume(0)
+            mediaPlayer2:pause()
+        end
+    end
+
+    if comboMeter >= 50 and comboMeter <= 51 then
+        if not hasPlayedFrenzy then
+            if muteToggle then
+                mediaPlayer2:setSource(killingFrenzy)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedFrenzy = true
+            else
+                mediaPlayer2:setVolume(0)
+                mediaPlayer2:pause()
+            end
+        end
+    end
+
+    if comboMeter >= 75 and comboMeter <= 76 then
+        if not hasPlayedRiot then
+            if muteToggle then
+                mediaPlayer2:setSource(runningRiot)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedRiot = true
+            else
+                mediaPlayer2:setVolume(0)
+                mediaPlayer2:pause()
+            end
+        end
+    end
+
+    if comboMeter >= 100 and comboMeter <= 101 then
+        if not hasPlayedRampage then
+            if muteToggle then
+                mediaPlayer2:setSource(rampage)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedRampage = true
+            else
+                mediaPlayer2:setVolume(0)
+                mediaPlayer2:pause()
+            end
+        end
+    end
+
+    if comboMeter >= 150 and comboMeter <= 151 then
+        if not hasPlayedUntouchable then
+            if muteToggle then
+                mediaPlayer2:setSource(untouchable)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedUntouchable = true
+            else
+                mediaPlayer2:setVolume(0)
+                mediaPlayer2:pause()
+            end
+        end
+    end
+
+    if comboMeter >= 200 and comboMeter <= 201 then
+        if not hasPlayedInvincible then
+            if muteToggle then
+                mediaPlayer2:setSource(invincible)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedInvincible = true
+            else
+                mediaPlayer2:setVolume(0)
+                mediaPlayer2:pause()
+            end
+        end
+    end
+
+    if comboMeter >= 250 and comboMeter <= 251 then
+        if not hasPlayedInconcievable then
+            if muteToggle then
+                mediaPlayer2:setSource(inconcievable)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedInconcievable = true
+            else
+                mediaPlayer2:setVolume(0)
+                mediaPlayer2:pause()
+            end
+        end
+    end
+
+    if comboMeter >= 300 and comboMeter <= 301 then
+        if not hasPlayedUnfriggenbelievable then
+            if muteToggle then
+                mediaPlayer2:setSource(unfriggenbelievable)
+                mediaPlayer2:setVolume(.5)
+                mediaPlayer2:play()
+                hasPlayedUnfriggenbelievable = true
+            else
+                mediaPlayer2:setVolume(0)
+                mediaPlayer2:pause()
+            end
+        end
+    end
+
+    -- Traffic detection and scoring
+    for i = 2, ac.getSim().carsCount do
+        local car = ac.getCarState(i)
+        local state = carsState[i]
+
+        if car.position:closerToThan(player.position, 7) then
+            local drivingAlong = math.dot(car.look, player.look) > 0.2
+            if not drivingAlong then
+                state.drivingAlong = false
+
+                if not state.nearMiss and car.position:closerToThan(player.position, 3) then
+                    state.nearMiss = true
+                end
+            end
+
+            if not state.overtaken and not state.collided and state.drivingAlong then
+                local posDir = (car.position - player.position):normalize()
+                local posDot = math.dot(posDir, car.look)
+                state.maxPosDot = math.max(state.maxPosDot, posDot)
+                if posDot < -0.5 and state.maxPosDot > 0.5 then
+                    totalScore = totalScore + math.ceil(player.speedKmh/10 * comboMeter)
+                    comboMeter = comboMeter + 1
+                    comboColor = comboColor + 90
+                    
+                    if muteToggle then
+                        mediaPlayer3:setSource(noti)
+                        mediaPlayer3:setVolume(1)
+                        mediaPlayer3:play()
+                    else
+                        mediaPlayer3:setSource(noti)
+                        mediaPlayer3:setVolume(0)
+                        mediaPlayer3:pause()
+                    end
+
+                    addMessage('Overtake 1x', comboMeter > 50 and 1 or 0)
+                    state.overtaken = true
+
+                    if car.position:closerToThan(player.position, 3) then
+                        comboMeter = comboMeter + 3
+                        comboColor = comboColor + math.random(1, 90)
+                        comboColor = comboColor + 90
+                        if muteToggle then
+                            mediaPlayer3:setSource(noti)
+                            mediaPlayer3:setVolume(1)
+                            mediaPlayer3:play()
+                        else
+                            mediaPlayer3:setSource(noti)
+                            mediaPlayer3:setVolume(0)
+                            mediaPlayer3:pause()
+                        end
+
+                        addMessage(CloseMessages[math.random(#CloseMessages)], 2)
+                    end
+                end
+            end
+        else
+            state.maxPosDot = -1
+            state.overtaken = false
+            state.collided = false
+            state.drivingAlong = true
+            state.nearMiss = false
+        end
     end
 end
 
--- Initialize script
-function script.load()
-    ac.log("Traffic Server Script Loading...")
-    
-    loadPlayerData()
-    initialized = true
-    showPopup("Welcome to Traffic Server!", "info")
-    
-    ac.log("Traffic Server Script Loaded Successfully!")
-end
+-- ========== UI RENDERING ==========
 
-function script.unload()
-    if initialized then
-        savePlayerData()
-        ac.log("Traffic Server Script Unloaded - Data Saved")
+function script.drawUI()
+    -- UI toggle
+    local keyState = ac.isKeyDown(ac.KeyIndex.Control) and ac.isKeyDown(ac.KeyIndex.D)
+    if keyState and LastKeyState ~= keyState then
+        UIToggle = not UIToggle
+        LastKeyState = keyState
+    elseif not keyState then
+        LastKeyState = false
+    end
+
+    if UIToggle then
+        local uiState = ac.getUiState()
+        updateMessages(uiState.dt)
+
+        local speedRelative = math.saturate(math.floor(ac.getCarState(1).speedKmh) / requiredSpeed)
+        speedWarning = math.applyLag(speedWarning, speedRelative < 1 and 1 or 0, 0.5, uiState.dt)
+
+        -- Dynamic color calculation using the centralized palette
+        local colorAccent = rgbm.new(hsv(speedRelative * 120, 1, 1):rgb(), 1)
+        local colorCombo = getAnimatedComboColor(comboMeter, timePassed)
+
+        local function speedMeter(ref)
+            ui.drawRectFilled(ref + vec2(0, -4), ref + vec2(300, 5), colors.dark, 1)
+            ui.drawLine(ref + vec2(0, -4), ref + vec2(0, 4), colors.grey, 1)
+            ui.drawLine(ref + vec2(requiredSpeed, -4), ref + vec2(requiredSpeed, 4), colors.grey, 1)
+
+            local speed = math.min(ac.getCarState(1).speedKmh, 300)
+            if speed > 1 then
+                ui.drawLine(ref + vec2(0, 0), ref + vec2(speed, 0), colorAccent, 4)
+            end
+        end
+
+        ui.beginTransparentWindow('overtakeScore', uiCustomPos, vec2(1400, 1400), true)
+        ui.beginOutline()
+
+        ui.pushStyleVar(ui.StyleVar.Alpha, 1 - speedWarning)
+        ui.pushFont(ui.Font.Title)
+        ui.text('Driving Fast = More Points')
+        ui.pushFont(ui.Font.Huge)
+        
+        -- PB display with flash animation
+        local pbText = 'PB:' .. (animatedPB:isAnimatingValue() and animatedPB:getFormattedValue() or personalBest) .. ' pts'
+        if pbFlashAnimation.active then
+            -- Apply scale effect (visual emphasis)
+            local flashColor = colors.pbFlash
+            if math.sin(pbFlashAnimation.colorPhase * math.pi) > 0 then
+                flashColor = colors.pbFlashBright
+            end
+            
+            if pbFlashAnimation.scale > 1.1 then
+                ui.textColored('★ ' .. pbText .. ' ★', flashColor)
+            else
+                ui.textColored(pbText, flashColor)
+            end
+        else
+            ui.textColored(pbText, colors.pbNormal)
+        end
+        
+        ui.popFont()
+        ui.popStyleVar()
+
+        speedMeter(ui.getCursor() + vec2(-9, 4))
+
+        ui.pushFont(ui.Font.Huge)
+        
+        -- Score display with animation
+        local scoreText = (animatedScore:isAnimatingValue() and animatedScore:getFormattedValue() or totalScore) .. ' pts'
+        local scoreColor = animatedScore:isAnimatingValue() and colors.scoreAnimating or colors.scoreNormal
+        ui.textColored(scoreText, scoreColor)
+        
+        ui.sameLine(0, 40)
+        ui.beginRotation()
+        
+        -- Combo text with sine-based rotation
+        local comboDisplayValue = animatedCombo:isAnimatingValue() and animatedCombo:getValue() or comboMeter
+        local comboText = math.ceil(comboDisplayValue * 10) / 10 .. 'x'
+        ui.textColored(comboText, colorCombo)
+        
+        -- Enhanced combo rotation based on sine of time & combo value
+        local rotationAngle = 0
+        if comboMeter > 20 then
+            local timeComponent = math.sin(timePassed * 2) * 2
+            local comboComponent = math.sin(comboMeter / 100 * math.pi) * 3
+            rotationAngle = timeComponent + comboComponent
+            ui.endRotation(rotationAngle)
+        elseif comboMeter > 50 then
+            local timeComponent = math.sin(timePassed * 3) * 3
+            local comboComponent = math.sin(comboMeter / 150 * math.pi) * 4
+            rotationAngle = timeComponent + comboComponent
+            ui.endRotation(rotationAngle)
+        elseif comboMeter > 100 then
+            local timeComponent = math.sin(timePassed * 4) * 4
+            local comboComponent = math.sin(comboMeter / 200 * math.pi) * 5
+            rotationAngle = timeComponent + comboComponent
+            ui.endRotation(rotationAngle)
+        elseif comboMeter > 250 then
+            local timeComponent = math.sin(timePassed * 5) * 5
+            local comboComponent = math.sin(comboMeter / 300 * math.pi) * 6
+            rotationAngle = timeComponent + comboComponent
+            ui.endRotation(rotationAngle)
+        end
+
+        ui.popFont()
+        ui.endOutline(rgbm(0, 0, 0, 0.3))
+
+        ui.offsetCursorY(20)
+        ui.pushFont(ui.Font.Title)
+        local startPos = ui.getCursor()
+        
+        -- Message system using centralized color palette
+        for i = 1, #messages do
+            local m = messages[i]
+            local f = math.saturate(4 - m.currentPos) * math.saturate(8 - m.age)
+            ui.setCursor(startPos + vec2(20 + math.saturate(1 - m.age * 10) ^ 2 * 100, (m.currentPos - 1) * 30))
+            
+            local messageColor = colors.messageDefault
+            if m.mood == 1 then
+                messageColor = colors.messageSuccess
+            elseif m.mood == -1 then
+                messageColor = colors.messageError
+            elseif m.mood == 2 then
+                messageColor = colors.messageSpecial
+            end
+            
+            ui.textColored(m.text, rgbm(messageColor.r, messageColor.g, messageColor.b, f))
+        end
+        
+        -- Glitter effects
+        for i = 1, glitterCount do
+            local g = glitter[i]
+            if g ~= nil then
+                ui.drawLine(g.pos, g.pos + g.velocity * 4, g.color, 2)
+            end
+        end
+        
+        ui.popFont()
+        ui.setCursor(startPos + vec2(0, 4 * 10))
+
+        ui.pushStyleVar(ui.StyleVar.Alpha, speedWarning)
+        ui.setCursorY(75)
+        ui.pushFont(ui.Font.Main)
+        ui.textColored('Keep speed above ' .. requiredSpeed .. ' km/h:', colorAccent)
+        ui.popFont()
+        ui.popStyleVar()
+
+        ui.endTransparentWindow()
+    else
+        ui.text('')
     end
 end
-
--- Auto-initialize
-script.load()
