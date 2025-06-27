@@ -1,9 +1,12 @@
--- Assetto Corsa Traffic Server Script - CSP Compatible
--- Version 2.0.0 - Completely rewritten for proper CSP Lua API
--- Production-ready server-side script with No Hesi-style functionality
+-- Assetto Corsa Traffic Server Script - Final Version
+-- CSP Compatible - No Hesi Style Traffic Server
+-- Version 3.0.0 - Clean implementation with proper CSP API
 
--- Global state
+-- Global variables
 local initialized = false
+local frameCount = 0
+
+-- Player data
 local playerData = {
     score = 0,
     personalBest = 0,
@@ -13,7 +16,6 @@ local playerData = {
     proximityMultiplier = 1.0,
     comboMultiplier = 1.0,
     comboCount = 0,
-    lastPosition = vec3(0, 0, 0),
     lastSpeed = 0,
     lanesUsed = {},
     nearMissCount = 0,
@@ -22,6 +24,7 @@ local playerData = {
     lastScoreTime = 0
 }
 
+-- UI state
 local uiState = {
     showMainUI = true,
     showPopup = false,
@@ -29,34 +32,25 @@ local uiState = {
     popupType = "info",
     popupStartTime = 0,
     popupDuration = 3.0,
-    windowPos = vec2(50, 50),
-    windowSize = vec2(320, 200),
-    scoreChangeAnimation = {
+    scoreAnimation = {
         active = false,
         startTime = 0,
         duration = 1.0,
         startValue = 0,
-        endValue = 0,
-        currentValue = 0
+        endValue = 0
     },
-    newPBAnimation = {
+    pbAnimation = {
         active = false,
         startTime = 0,
         duration = 2.0,
-        scale = 1.0,
-        alpha = 1.0
+        scale = 1.0
     }
 }
 
--- Storage system using ac.storage
-local storage = ac.storage
-
--- Colors
+-- Colors using rgbm format
 local colors = {
     background = rgbm(0.1, 0.1, 0.1, 0.95),
-    backgroundDark = rgbm(0.05, 0.05, 0.05, 0.98),
     primary = rgbm(0.6, 0.4, 1.0, 1.0),
-    secondary = rgbm(0.8, 0.8, 0.8, 1.0),
     success = rgbm(0.2, 0.8, 0.2, 1.0),
     warning = rgbm(1.0, 0.6, 0.0, 1.0),
     error = rgbm(1.0, 0.2, 0.2, 1.0),
@@ -85,31 +79,33 @@ local function formatTime(seconds)
 end
 
 local function formatScore(score)
-    local str = string.format("%.0f", math.floor(score))
-    local formatted = ""
+    local scoreInt = math.floor(score)
+    local str = tostring(scoreInt)
     local len = string.len(str)
+    local result = ""
+    
     for i = 1, len do
-        formatted = formatted .. string.sub(str, i, i)
+        result = result .. string.sub(str, i, i)
         if (len - i) % 3 == 0 and i ~= len then
-            formatted = formatted .. ","
+            result = result .. ","
         end
     end
-    return formatted
+    return result
 end
 
 -- Storage functions
 local function savePlayerData()
-    storage:setNumber("traffic_score", playerData.score)
-    storage:setNumber("traffic_pb", playerData.personalBest)
-    storage:setNumber("traffic_lives", playerData.lives)
-    storage:setNumber("traffic_collision_count", playerData.collisionCount)
+    ac.storage.score = playerData.score
+    ac.storage.personalBest = playerData.personalBest
+    ac.storage.lives = playerData.lives
+    ac.storage.collisionCount = playerData.collisionCount
 end
 
 local function loadPlayerData()
-    playerData.score = storage:getNumber("traffic_score", 0)
-    playerData.personalBest = storage:getNumber("traffic_pb", 0)
-    playerData.lives = storage:getNumber("traffic_lives", 3)
-    playerData.collisionCount = storage:getNumber("traffic_collision_count", 0)
+    playerData.score = ac.storage.score or 0
+    playerData.personalBest = ac.storage.personalBest or 0
+    playerData.lives = ac.storage.lives or 3
+    playerData.collisionCount = ac.storage.collisionCount or 0
     playerData.sessionStartTime = os.clock()
 end
 
@@ -142,8 +138,9 @@ local function calculateProximityMultiplier()
     local playerPos = car.position
     local closestDistance = math.huge
     local nearbyCount = 0
+    local sim = ac.getSim()
     
-    for i = 1, ac.getSim().carsCount - 1 do
+    for i = 1, sim.carsCount - 1 do
         local otherCar = ac.getCar(i)
         if otherCar and otherCar.isConnected then
             local distance = playerPos:distance(otherCar.position)
@@ -172,8 +169,9 @@ local function detectNearMiss()
     
     local playerPos = car.position
     local playerVel = car.velocity
+    local sim = ac.getSim()
     
-    for i = 1, ac.getSim().carsCount - 1 do
+    for i = 1, sim.carsCount - 1 do
         local otherCar = ac.getCar(i)
         if otherCar and otherCar.isConnected then
             local distance = playerPos:distance(otherCar.position)
@@ -217,7 +215,7 @@ local function playSound(soundType)
     ac.log("Playing sound: " .. soundType)
 end
 
--- Score update function
+-- Main update function
 local function updateScore(dt)
     local car = ac.getCar(0)
     if not car or not car.isConnected then return end
@@ -262,25 +260,24 @@ local function updateScore(dt)
     
     -- Animate score change
     if scoreGain > 0 and currentTime - playerData.lastScoreTime > 0.1 then
-        uiState.scoreChangeAnimation.active = true
-        uiState.scoreChangeAnimation.startTime = currentTime
-        uiState.scoreChangeAnimation.startValue = oldScore
-        uiState.scoreChangeAnimation.endValue = playerData.score
+        uiState.scoreAnimation.active = true
+        uiState.scoreAnimation.startTime = currentTime
+        uiState.scoreAnimation.startValue = oldScore
+        uiState.scoreAnimation.endValue = playerData.score
         playerData.lastScoreTime = currentTime
     end
     
     -- Check for new personal best
     if playerData.score > playerData.personalBest then
         playerData.personalBest = playerData.score
-        uiState.newPBAnimation.active = true
-        uiState.newPBAnimation.startTime = currentTime
+        uiState.pbAnimation.active = true
+        uiState.pbAnimation.startTime = currentTime
         showPopup("NEW PERSONAL BEST!", "success")
         playSound("newRecord")
         savePlayerData()
     end
     
     -- Store current values for next frame
-    playerData.lastPosition = position
     playerData.lastSpeed = speed
 end
 
@@ -315,44 +312,35 @@ local function handleCollision()
     savePlayerData()
 end
 
--- Animation update function
+-- Animation update
 local function updateAnimations(dt)
     local currentTime = os.clock()
     
-    -- Score change animation
-    if uiState.scoreChangeAnimation.active then
-        local elapsed = currentTime - uiState.scoreChangeAnimation.startTime
-        local progress = elapsed / uiState.scoreChangeAnimation.duration
+    -- Score animation
+    if uiState.scoreAnimation.active then
+        local elapsed = currentTime - uiState.scoreAnimation.startTime
+        local progress = elapsed / uiState.scoreAnimation.duration
         
         if progress >= 1.0 then
-            uiState.scoreChangeAnimation.active = false
-        else
-            local easedProgress = easeOutQuart(progress)
-            uiState.scoreChangeAnimation.currentValue = lerp(
-                uiState.scoreChangeAnimation.startValue,
-                uiState.scoreChangeAnimation.endValue,
-                easedProgress
-            )
+            uiState.scoreAnimation.active = false
         end
     end
     
-    -- New PB animation
-    if uiState.newPBAnimation.active then
-        local elapsed = currentTime - uiState.newPBAnimation.startTime
-        local progress = elapsed / uiState.newPBAnimation.duration
+    -- PB animation
+    if uiState.pbAnimation.active then
+        local elapsed = currentTime - uiState.pbAnimation.startTime
+        local progress = elapsed / uiState.pbAnimation.duration
         
         if progress >= 1.0 then
-            uiState.newPBAnimation.active = false
-            uiState.newPBAnimation.scale = 1.0
-            uiState.newPBAnimation.alpha = 1.0
+            uiState.pbAnimation.active = false
+            uiState.pbAnimation.scale = 1.0
         else
             local easedProgress = easeInOutCubic(progress)
-            uiState.newPBAnimation.scale = 1.0 + math.sin(easedProgress * math.pi) * 0.3
-            uiState.newPBAnimation.alpha = 1.0 - easedProgress * 0.3
+            uiState.pbAnimation.scale = 1.0 + math.sin(easedProgress * math.pi) * 0.3
         end
     end
     
-    -- Popup animation
+    -- Popup timeout
     if uiState.showPopup then
         local elapsed = currentTime - uiState.popupStartTime
         if elapsed >= uiState.popupDuration then
@@ -361,35 +349,13 @@ local function updateAnimations(dt)
     end
 end
 
--- UI drawing functions
-local function drawMultiplierBar(label, value, maxValue, color, pos, size)
-    local fillWidth = (value / maxValue) * size.x
-    
-    -- Background
-    ui.drawRectFilled(pos, pos + size, colors.backgroundDark, 3)
-    
-    -- Fill
-    if fillWidth > 0 then
-        ui.drawRectFilled(pos, vec2(pos.x + fillWidth, pos.y + size.y), color, 3)
-    end
-    
-    -- Border
-    ui.drawRect(pos, pos + size, colors.secondary, 3, 1)
-    
-    -- Text
-    ui.setCursor(vec2(pos.x + 5, pos.y + size.y / 2 - 6))
-    ui.text(label)
-    
-    local valueText = string.format("%.1fx", value)
-    ui.setCursor(vec2(pos.x + size.x - 35, pos.y + size.y / 2 - 6))
-    ui.text(valueText)
-end
-
--- Main script functions for CSP
+-- Main CSP function
 function script.windowMain(dt)
     if not initialized then
         return
     end
+    
+    frameCount = frameCount + 1
     
     -- Update game logic
     updateScore(dt)
@@ -402,8 +368,8 @@ function script.windowMain(dt)
     -- Update animations
     updateAnimations(dt)
     
-    -- Auto-save periodically
-    if math.floor(os.clock()) % 10 == 0 then
+    -- Auto-save every 600 frames (10 seconds at 60fps)
+    if frameCount % 600 == 0 then
         savePlayerData()
     end
     
@@ -413,35 +379,23 @@ function script.windowMain(dt)
     local currentTime = os.clock()
     local sessionTime = currentTime - playerData.sessionStartTime
     
-    ui.setNextWindowPos(uiState.windowPos, ui.Cond.FirstUseEver)
-    ui.setNextWindowSize(uiState.windowSize, ui.Cond.FirstUseEver)
+    ui.setNextWindowPos(vec2(50, 50), ui.Cond.FirstUseEver)
+    ui.setNextWindowSize(vec2(320, 220), ui.Cond.FirstUseEver)
     
-    if ui.begin("Traffic Score", true, ui.WindowFlags.NoCollapse) then
-        uiState.windowPos = ui.getWindowPos()
-        uiState.windowSize = ui.getWindowSize()
-        
+    if ui.begin("Traffic Score") then
         -- Time display
         ui.text("Session: " .. formatTime(sessionTime))
         ui.separator()
         
         -- Score display
         local scoreText = formatScore(playerData.score)
-        if uiState.scoreChangeAnimation.active then
-            scoreText = formatScore(uiState.scoreChangeAnimation.currentValue)
-        end
-        
         ui.textColored(colors.textDim, "SCORE")
-        ui.pushFont(ui.Font.Title)
         ui.textColored(colors.accent, scoreText)
-        ui.popFont()
         
         -- Personal Best
         local pbText = "PB: " .. formatScore(playerData.personalBest)
-        if uiState.newPBAnimation.active then
-            ui.pushFont(ui.Font.Title)
-            local scaledColor = rgbm(colors.success.rgb, colors.success.a * uiState.newPBAnimation.alpha)
-            ui.textColored(scaledColor, pbText)
-            ui.popFont()
+        if uiState.pbAnimation.active then
+            ui.textColored(colors.success, pbText)
         else
             ui.textColored(colors.textDim, pbText)
         end
@@ -468,8 +422,8 @@ function script.windowMain(dt)
         for _ in pairs(playerData.lanesUsed) do laneCount = laneCount + 1 end
         ui.text("Lanes: " .. laneCount)
         
-        ui.end()
     end
+    ui.endWindow()
     
     -- Draw popup
     if uiState.showPopup then
@@ -488,17 +442,13 @@ function script.windowMain(dt)
             popupColor = colors.error
         end
         
-        ui.setNextWindowPos(vec2(uiState.windowPos.x + uiState.windowSize.x / 2 - 100, 
-                                uiState.windowPos.y + uiState.windowSize.y / 2 - 25), ui.Cond.Always)
+        ui.setNextWindowPos(vec2(200, 100), ui.Cond.Always)
         ui.setNextWindowSize(vec2(200, 50), ui.Cond.Always)
         
-        ui.pushStyleColor(ui.Col.WindowBg, rgbm(colors.backgroundDark.rgb, alpha))
-        if ui.begin("Popup", false, ui.WindowFlags.NoTitleBar + ui.WindowFlags.NoResize + ui.WindowFlags.NoMove) then
-            local scaledColor = rgbm(popupColor.rgb, alpha)
-            ui.textColored(scaledColor, uiState.popupText)
-            ui.end()
+        if ui.begin("##Popup", false, bit.bor(ui.WindowFlags.NoTitleBar, ui.WindowFlags.NoResize, ui.WindowFlags.NoMove)) then
+            ui.textColored(rgbm(popupColor.r, popupColor.g, popupColor.b, alpha), uiState.popupText)
         end
-        ui.popStyleColor()
+        ui.endWindow()
     end
 end
 
@@ -507,9 +457,6 @@ function script.load()
     ac.log("Traffic Server Script Loading...")
     
     loadPlayerData()
-    uiState.windowPos = vec2(50, 50)
-    uiState.windowSize = vec2(320, 200)
-    
     initialized = true
     showPopup("Welcome to Traffic Server!", "info")
     
@@ -524,6 +471,4 @@ function script.unload()
 end
 
 -- Auto-initialize
-if not initialized then
-    script.load()
-end
+script.load()
