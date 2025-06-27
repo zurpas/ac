@@ -723,7 +723,3 @@ function script.drawUI()
         end
     end
 end
-
-
-
-end
