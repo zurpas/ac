@@ -350,7 +350,7 @@ ui.registerWindow("trafficScore", function()
     end
 
   end, ui.WindowFlags.NoResize | ui.WindowFlags.NoCollapse | ui.WindowFlags.AlwaysAutoResize | ui.WindowFlags.NoTitleBar | ui.WindowFlags.NoSavedSettings, CFG.windowAlpha)
-end)
+end
 
 ---------------------------------------------------------------------
 -- SCRIPT LIFECYCLE --------------------------------------------------
