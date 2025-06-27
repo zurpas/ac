@@ -65,9 +65,9 @@ local CFG = {
   windowAlpha        = 0.82,
 
   -- Sound urls --------------------------------------------------------------
-  sndCollision       = "https://examplecdn.com/sfx/collision.wav",
-  sndNewPB           = "https://examplecdn.com/sfx/newpb.wav",
-  sndPopup           = "https://examplecdn.com/sfx/popup.wav",
+  sndCollision       = "https://pouch.jumpshare.com/preview/gqrndw4hWQJvYsX5fnCgIXxj85SeyzDMKLkN4k-LI84Hl-ybkdx1CXcS0ZgflrY137n5HCsitRoKHyZkWi1kO5xYJjLNidZFFpvY6h-EO5YCgCtgkwvdPnr5fN5G2ah6fMkGhYIJ8znZ2qIYXG39SG6yjbN-I2pg_cnoHs_AmgI.wav",
+  sndNewPB           = "https://pouch.jumpshare.com/preview/DEHhvx97itAX7pI6L-IfA12UZ4zFllzWCS8OjS_qSDPXGd3QWeLoMoEJOegFQle_X51kWGLPP319wB5TgEqYa4Zq_WIsPw2UNa3RWASRAYf6KuA1krstcP9cj7RzQxM_dz-22ZNZdPkSWSvi_A90LW6yjbN-I2pg_cnoHs_AmgI.wav",
+  sndPopup           = "https://pouch.jumpshare.com/preview/RDaVIczqjTNClKDaYh08oNCpMYz-CIOoGZ8R8iwsD5crDfyQhu6f-kEXrEF3UKLcZVGjD2zukj5FtJKHxerty9W8oejAs4KgWjDBHS8evYFao5Q4mmpbbJuOIKW_QsI_SzQK7xSgy9bPPpCNQwC1j26yjbN-I2pg_cnoHs_AmgI.wav",
 }
 
 ---------------------------------------------------------------------
