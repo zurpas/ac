@@ -139,12 +139,24 @@ end
 
 local function loadPersonalBest()
     local stored = ac.storage()
-    GameState.personalBest = stored:get('personalBest', 0)
+    if stored then
+        local pb = stored:get('personalBest', 0)
+        GameState.personalBest = (pb and type(pb) == 'number') and pb or 0
+    else
+        GameState.personalBest = 0
+    end
+
+    -- Ensure personalBest is never nil
+    if not GameState.personalBest or type(GameState.personalBest) ~= 'number' then
+        GameState.personalBest = 0
+    end
 end
 
 local function savePersonalBest()
     local stored = ac.storage()
-    stored:set('personalBest', GameState.personalBest)
+    if stored and GameState.personalBest and type(GameState.personalBest) == 'number' then
+        stored:set('personalBest', GameState.personalBest)
+    end
 end
 
 -- ============================================================================
@@ -562,7 +574,8 @@ function script.drawUI()
     ui.popFont()
 
     ui.pushFont(ui.Font.Main)
-    ui.textColored(string.format('Personal Best: %d pts', GameState.personalBest), colorAccent)
+    local personalBest = GameState.personalBest or 0
+    ui.textColored(string.format('Personal Best: %d pts', personalBest), colorAccent)
     ui.popFont()
 
     ui.dummy(vec2(0, 10))
@@ -573,14 +586,17 @@ function script.drawUI()
 
     -- Current score and combo
     ui.pushFont(ui.Font.Huge)
-    ui.text(string.format('%d pts', GameState.currentScore))
+    local currentScore = GameState.currentScore or 0
+    ui.text(string.format('%d pts', currentScore))
     ui.sameLine(0, 20)
 
     -- Animated combo multiplier
-    if GameState.comboMultiplier > 1.1 then
+    local comboMultiplier = GameState.comboMultiplier or 1.0
+    if comboMultiplier > 1.1 then
         ui.beginRotation()
-        ui.textColored(string.format('%.1fx', GameState.comboMultiplier), colorCombo)
-        local rotation = math.sin(GameState.timePassed * 5) * 5 * math.min(1, (GameState.comboMultiplier - 1) / 10)
+        ui.textColored(string.format('%.1fx', comboMultiplier), colorCombo)
+        local timePassed = GameState.timePassed or 0
+        local rotation = math.sin(timePassed * 5) * 5 * math.min(1, (comboMultiplier - 1) / 10)
         ui.endRotation(rotation)
     end
     ui.popFont()
@@ -590,8 +606,9 @@ function script.drawUI()
     ui.pushFont(ui.Font.Main)
     ui.text('Lives: ')
     ui.sameLine()
+    local lives = GameState.lives or CONFIG.LIVES_COUNT
     for i = 1, CONFIG.LIVES_COUNT do
-        if i <= GameState.lives then
+        if i <= lives then
             ui.textColored('♥', rgbm(1, 0.2, 0.2, 1))
         else
             ui.textColored('♡', rgbm(0.5, 0.5, 0.5, 1))
@@ -619,6 +636,11 @@ function drawSpeedMeter(pos, ratio, accentColor, darkColor)
     local width = 300
     local height = 8
 
+    -- Ensure ratio is valid
+    ratio = ratio or 0
+    if type(ratio) ~= 'number' then ratio = 0 end
+    ratio = math.max(0, math.min(1, ratio))
+
     -- Background
     ui.drawRectFilled(pos, pos + vec2(width, height), darkColor, 2)
 
@@ -635,7 +657,9 @@ function drawSpeedMeter(pos, ratio, accentColor, darkColor)
     -- Speed text
     ui.setCursor(pos + vec2(0, height + 5))
     ui.pushFont(ui.Font.Small)
-    ui.text(string.format('%.0f km/h (min: %d)', ac.getCarState(1).speedKmh, CONFIG.REQUIRED_SPEED))
+    local player = ac.getCarState(1)
+    local currentSpeed = (player and player.speedKmh) and player.speedKmh or 0
+    ui.text(string.format('%.0f km/h (min: %d)', currentSpeed, CONFIG.REQUIRED_SPEED))
     ui.popFont()
 end
 
@@ -993,9 +1017,48 @@ updateCarTracking = updateCarTrackingOptimized
 -- FINAL INITIALIZATION AND CLEANUP
 -- ============================================================================
 
+-- Ensure all GameState values are properly initialized
+local function ensureGameStateIntegrity()
+    -- Ensure all numeric values are never nil
+    GameState.currentScore = GameState.currentScore or 0
+    GameState.personalBest = GameState.personalBest or 0
+    GameState.lives = GameState.lives or CONFIG.LIVES_COUNT
+    GameState.collisionCount = GameState.collisionCount or 0
+    GameState.comboMultiplier = GameState.comboMultiplier or 1.0
+    GameState.speedMultiplier = GameState.speedMultiplier or 1.0
+    GameState.proximityBonus = GameState.proximityBonus or 1.0
+    GameState.timePassed = GameState.timePassed or 0
+    GameState.lastSpeedWarning = GameState.lastSpeedWarning or 0
+    GameState.dangerousSlowTimer = GameState.dangerousSlowTimer or 0
+    GameState.comboColorHue = GameState.comboColorHue or 0
+
+    -- Ensure boolean values are never nil
+    GameState.uiMoveMode = GameState.uiMoveMode or false
+    GameState.uiVisible = GameState.uiVisible or true
+    GameState.soundEnabled = GameState.soundEnabled or true
+
+    -- Ensure table values are never nil
+    GameState.lanesDriven = GameState.lanesDriven or {}
+    GameState.notifications = GameState.notifications or {}
+    GameState.particles = GameState.particles or {}
+    GameState.carsState = GameState.carsState or {}
+    GameState.mediaPlayers = GameState.mediaPlayers or {}
+    GameState.stats = GameState.stats or {
+        totalOvertakes = 0,
+        totalNearMisses = 0,
+        totalCollisions = 0,
+        sessionStartTime = 0,
+        bestCombo = 0
+    }
+
+    -- Ensure vector values are never nil
+    GameState.uiPosition = GameState.uiPosition or vec2(900, 70)
+end
+
 -- Initialize script state on first load
 local function initializeScript()
     if GameState.timePassed == 0 then
+        ensureGameStateIntegrity()
         loadPersonalBest()
         GameState.stats.sessionStartTime = 0
 
@@ -1008,6 +1071,9 @@ local function initializeScript()
         GameState.milestonesReached = {}
 
         ac.log('Traffic Scoring Pro v2.0 initialized successfully')
+    else
+        -- Ensure integrity on every update
+        ensureGameStateIntegrity()
     end
 end
 
