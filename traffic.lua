@@ -63,15 +63,23 @@ local GameState = {
     -- Player state
     currentScore = 0,
     personalBest = 0,
+    personalBestData = {}, -- Track/car combination data
     lives = CONFIG.LIVES_COUNT,
     collisionCount = 0,
-    
+
+    -- Run state management
+    runState = 'not_started', -- 'not_started', 'active', 'ended'
+    runStartTime = 0,
+    runEndTime = 0,
+    runStartScore = 0,
+    pendingPBUpdate = false,
+
     -- Scoring state
     comboMultiplier = 1.0,
     speedMultiplier = 1.0,
     proximityBonus = 1.0,
     lanesDriven = {},
-    
+
     -- Timing state
     timePassed = 0,
     lastSpeedWarning = 0,
@@ -148,28 +156,322 @@ local function hsv2rgb(h, s, v)
 end
 
 -- ============================================================================
--- PERSISTENCE SYSTEM
+-- SIMPLE JSON IMPLEMENTATION
 -- ============================================================================
 
+-- Simple JSON encoder/decoder for PB data storage
+local JSON = {}
+
+function JSON.stringify(obj)
+    if type(obj) == 'table' then
+        local result = '{'
+        local first = true
+        for k, v in pairs(obj) do
+            if not first then result = result .. ',' end
+            first = false
+            result = result .. '"' .. tostring(k) .. '":' .. JSON.stringify(v)
+        end
+        return result .. '}'
+    elseif type(obj) == 'string' then
+        return '"' .. obj:gsub('"', '\\"') .. '"'
+    elseif type(obj) == 'number' then
+        return tostring(obj)
+    elseif type(obj) == 'boolean' then
+        return obj and 'true' or 'false'
+    else
+        return 'null'
+    end
+end
+
+function JSON.parse(str)
+    -- Simple JSON parser - handles basic objects only
+    if not str or str == '' then return {} end
+
+    -- Remove whitespace
+    str = str:gsub('%s+', '')
+
+    if str:sub(1,1) ~= '{' or str:sub(-1,-1) ~= '}' then
+        return {}
+    end
+
+    local result = {}
+    local content = str:sub(2, -2) -- Remove { }
+
+    if content == '' then return result end
+
+    -- Split by commas (simple approach)
+    local pairs = {}
+    local current = ''
+    local depth = 0
+
+    for i = 1, #content do
+        local char = content:sub(i,i)
+        if char == '{' then depth = depth + 1
+        elseif char == '}' then depth = depth - 1
+        elseif char == ',' and depth == 0 then
+            table.insert(pairs, current)
+            current = ''
+        else
+            current = current .. char
+        end
+    end
+    if current ~= '' then table.insert(pairs, current) end
+
+    -- Parse each key-value pair
+    for _, pair in ipairs(pairs) do
+        local colonPos = pair:find(':')
+        if colonPos then
+            local key = pair:sub(1, colonPos-1):gsub('"', '')
+            local value = pair:sub(colonPos+1)
+
+            -- Parse value
+            if value:sub(1,1) == '"' and value:sub(-1,-1) == '"' then
+                result[key] = value:sub(2, -2) -- String
+            elseif value == 'true' then
+                result[key] = true
+            elseif value == 'false' then
+                result[key] = false
+            elseif value == 'null' then
+                result[key] = nil
+            elseif tonumber(value) then
+                result[key] = tonumber(value)
+            elseif value:sub(1,1) == '{' then
+                result[key] = JSON.parse(value) -- Nested object
+            end
+        end
+    end
+
+    return result
+end
+
+-- ============================================================================
+-- ENHANCED PERSISTENCE SYSTEM
+-- ============================================================================
+
+-- Storage key generation for track/car combinations
+local function generateStorageKey(trackName, carName)
+    -- Sanitize names for storage keys
+    local cleanTrack = (trackName or "unknown"):gsub("[^%w_-]", "_"):lower()
+    local cleanCar = (carName or "unknown"):gsub("[^%w_-]", "_"):lower()
+    return string.format("pb_%s_%s", cleanTrack, cleanCar)
+end
+
+-- Get current track and car information
+local function getCurrentTrackCarInfo()
+    local sim = ac.getSim()
+    local trackName = ac.getTrackName() or "unknown_track"
+    local carName = "unknown_car"
+
+    -- Get player car name
+    if sim.carsCount > 0 then
+        local playerCar = ac.getCarState(1)
+        if playerCar then
+            carName = ac.getCarName(1) or "unknown_car"
+        end
+    end
+
+    return trackName, carName
+end
+
+-- Enhanced Personal Best loading with track/car combinations
 local function loadPersonalBest()
     local stored = ac.storage()
-    if stored then
-        local pb = stored:get('personalBest', 0)
-        GameState.personalBest = (pb and type(pb) == 'number') and pb or 0
-    else
+    if not stored then
         GameState.personalBest = 0
+        GameState.personalBestData = {}
+        return
+    end
+
+    local trackName, carName = getCurrentTrackCarInfo()
+    local storageKey = generateStorageKey(trackName, carName)
+
+    -- Load current track/car PB
+    local pb = stored:get(storageKey, 0)
+    GameState.personalBest = (pb and type(pb) == 'number' and pb >= 0) and pb or 0
+
+    -- Load global PB data for all track/car combinations
+    local globalPBData = stored:get('pb_data_global', '{}')
+    local success, pbData = pcall(function() return JSON.parse(globalPBData) end)
+
+    if success and type(pbData) == 'table' then
+        GameState.personalBestData = pbData
+    else
+        GameState.personalBestData = {}
+    end
+
+    -- Ensure current combination is in the data
+    if not GameState.personalBestData[storageKey] then
+        GameState.personalBestData[storageKey] = {
+            score = GameState.personalBest,
+            trackName = trackName,
+            carName = carName,
+            timestamp = os.time(),
+            version = "2.2"
+        }
+    end
+
+    -- Backward compatibility: migrate old single PB if exists
+    local legacyPB = stored:get('personalBest', nil)
+    if legacyPB and type(legacyPB) == 'number' and legacyPB > GameState.personalBest then
+        GameState.personalBest = legacyPB
+        GameState.personalBestData[storageKey].score = legacyPB
+        -- Remove legacy key after migration
+        stored:set('personalBest', nil)
     end
 
     -- Ensure personalBest is never nil
     if not GameState.personalBest or type(GameState.personalBest) ~= 'number' then
         GameState.personalBest = 0
     end
+
+    ac.log(string.format('Loaded PB: %d for %s on %s', GameState.personalBest, carName, trackName))
 end
 
+-- Enhanced Personal Best saving with error handling
 local function savePersonalBest()
     local stored = ac.storage()
-    if stored and GameState.personalBest and type(GameState.personalBest) == 'number' then
-        stored:set('personalBest', GameState.personalBest)
+    if not stored or not GameState.personalBest or type(GameState.personalBest) ~= 'number' then
+        ac.log('Failed to save PB: Invalid storage or PB value')
+        return false
+    end
+
+    local trackName, carName = getCurrentTrackCarInfo()
+    local storageKey = generateStorageKey(trackName, carName)
+
+    -- Save current track/car PB
+    local success1 = pcall(function()
+        stored:set(storageKey, GameState.personalBest)
+    end)
+
+    -- Update global PB data
+    if not GameState.personalBestData then
+        GameState.personalBestData = {}
+    end
+
+    GameState.personalBestData[storageKey] = {
+        score = GameState.personalBest,
+        trackName = trackName,
+        carName = carName,
+        timestamp = os.time(),
+        version = "2.2"
+    }
+
+    -- Save global PB data
+    local success2 = pcall(function()
+        local jsonData = JSON.stringify(GameState.personalBestData)
+        stored:set('pb_data_global', jsonData)
+    end)
+
+    if success1 and success2 then
+        ac.log(string.format('Saved PB: %d for %s on %s', GameState.personalBest, carName, trackName))
+        return true
+    else
+        ac.log('Failed to save PB: Storage error')
+        return false
+    end
+end
+
+-- Check if current score should update PB (only at run end)
+local function shouldUpdatePersonalBest(currentScore)
+    return currentScore > GameState.personalBest and GameState.runState == 'ended'
+end
+
+-- ============================================================================
+-- RUN STATE MANAGEMENT
+-- ============================================================================
+
+-- Start a new scoring run
+local function startRun()
+    if GameState.runState ~= 'not_started' then return end
+
+    GameState.runState = 'active'
+    GameState.runStartTime = GameState.timePassed
+    GameState.runStartScore = GameState.currentScore
+    GameState.pendingPBUpdate = false
+
+    addNotification('Run Started!', 'info', 2.0)
+    ac.log('Scoring run started')
+end
+
+-- End the current scoring run
+local function endRun()
+    if GameState.runState ~= 'active' then return end
+
+    GameState.runState = 'ended'
+    GameState.runEndTime = GameState.timePassed
+
+    -- Check for Personal Best update
+    if GameState.currentScore > GameState.personalBest then
+        local improvement = GameState.currentScore - GameState.personalBest
+        local improvementPercent = (improvement / math.max(GameState.personalBest, 1)) * 100
+
+        -- Update PB
+        GameState.personalBest = GameState.currentScore
+
+        -- Save immediately
+        if savePersonalBest() then
+            -- Notify based on improvement significance
+            if GameState.personalBest <= 100 then
+                addNotification(string.format('New Personal Best: %d pts!', GameState.personalBest), 'record', 4.0)
+            else
+                addNotification(string.format('NEW PB: %d pts (+%d)', GameState.personalBest, improvement), 'record', 5.0)
+            end
+            playSound(SOUNDS.PERSONAL_BEST, 0.7)
+            addPersonalBestOverlay(GameState.personalBest, improvement)
+        else
+            addNotification('PB achieved but save failed!', 'warning', 3.0)
+        end
+    end
+
+    addNotification(string.format('Run Ended - Final Score: %d', GameState.currentScore), 'info', 3.0)
+    ac.log(string.format('Scoring run ended - Final score: %d', GameState.currentScore))
+
+    -- Reset for next run after a delay
+    GameState.resetTimer = 5.0 -- Reset after 5 seconds
+end
+
+-- Reset for a new run
+local function resetForNewRun()
+    GameState.runState = 'not_started'
+    GameState.currentScore = 0
+    GameState.comboMultiplier = 1.0
+    GameState.combos = {speed = 1.0, proximity = 1.0, laneDiversity = 1.0, overtake = 1.0}
+    GameState.collisionCount = 0
+    GameState.lives = CONFIG.LIVES_COUNT
+    GameState.lanesDriven = {}
+    GameState.laneHistory = {}
+    GameState.overtakeHistory = {}
+    GameState.carsState = {}
+
+    addNotification('Ready for new run!', 'success', 2.0)
+end
+
+-- Detect run start conditions
+local function checkRunStartConditions(player)
+    if GameState.runState == 'not_started' and player.speedKmh > CONFIG.REQUIRED_SPEED then
+        startRun()
+    end
+end
+
+-- Detect run end conditions
+local function checkRunEndConditions(player)
+    if GameState.runState == 'active' then
+        -- End run if player stops for too long or goes too slow
+        if player.speedKmh < CONFIG.REQUIRED_SPEED * 0.5 then
+            if not GameState.slowSpeedTimer then
+                GameState.slowSpeedTimer = GameState.timePassed
+            elseif GameState.timePassed - GameState.slowSpeedTimer > 10.0 then
+                endRun()
+                GameState.slowSpeedTimer = nil
+            end
+        else
+            GameState.slowSpeedTimer = nil
+        end
+
+        -- End run if no lives left
+        if GameState.lives <= 0 then
+            endRun()
+        end
     end
 end
 
@@ -240,94 +542,153 @@ end
 -- SCORING SYSTEM
 -- ============================================================================
 
+-- Real-time speed combo calculation (dynamic tracking)
 local function calculateSpeedMultiplier(speed)
-    return math.max(1.0, speed / CONFIG.SPEED_MULTIPLIER_BASE)
+    -- Dynamic speed multiplier that changes in real-time
+    if speed < CONFIG.REQUIRED_SPEED then
+        return 0.5
+    elseif speed < 120 then
+        return 1.0 + ((speed - CONFIG.REQUIRED_SPEED) / (120 - CONFIG.REQUIRED_SPEED)) * 0.2
+    elseif speed < 150 then
+        return 1.2 + ((speed - 120) / (150 - 120)) * 0.3
+    elseif speed < 180 then
+        return 1.5 + ((speed - 150) / (180 - 150)) * 0.5
+    else
+        return 2.0 + math.min(1.0, (speed - 180) / 50) -- Cap at 3.0x
+    end
 end
 
+-- Real-time proximity combo (real players only)
 local function calculateProximityBonus(playerPos)
-    local bonus = 1.0
     local sim = ac.getSim()
-    
+    local nearbyRealPlayers = 0
+    local closestDistance = 999
+
+    -- Only count real players, not AI traffic
     for i = 2, sim.carsCount do
         local car = ac.getCarState(i)
-        if car and car.position:closerToThan(playerPos, CONFIG.PROXIMITY_BONUS_DISTANCE) then
+        if car and car.isConnected then -- Only real players
             local distance = car.position:distance(playerPos)
-            local proximityFactor = 1.0 - (distance / CONFIG.PROXIMITY_BONUS_DISTANCE)
-            bonus = bonus + proximityFactor * 0.5
+            if distance < CONFIG.PROXIMITY_BONUS_DISTANCE then
+                nearbyRealPlayers = nearbyRealPlayers + 1
+                closestDistance = math.min(closestDistance, distance)
+            end
         end
     end
-    
-    return math.min(bonus, 3.0) -- Cap at 3x bonus
-end
 
-local function updateLaneDiversity(playerPos)
-    -- Simple lane detection based on track position
-    local laneId = math.floor(playerPos.x / 4) -- Rough lane estimation
-    GameState.lanesDriven[laneId] = true
-    
-    local laneCount = 0
-    for _ in pairs(GameState.lanesDriven) do
-        laneCount = laneCount + 1
+    if nearbyRealPlayers == 0 then
+        return 1.0 -- Solo driving
     end
-    
-    return laneCount >= 3 and CONFIG.LANE_DIVERSITY_BONUS or 1.0
+
+    -- Bonus based on number of nearby players and proximity
+    local baseBonus = 1.0 + (nearbyRealPlayers * 0.15)
+    local proximityBonus = math.max(0, (20 - closestDistance) / 20) * 0.3
+
+    return baseBonus + proximityBonus
 end
 
-local function addScore(basePoints, player)
+-- Dynamic lane diversity tracking
+local function updateLaneDiversity(playerPos)
+    local currentLane = math.floor(playerPos.x / 3.5) -- Approximate lane detection
+    local currentTime = GameState.timePassed
+
+    -- Initialize lane tracking if needed
+    if not GameState.laneHistory then
+        GameState.laneHistory = {}
+    end
+
+    -- Record current lane with timestamp
+    table.insert(GameState.laneHistory, {lane = currentLane, time = currentTime})
+
+    -- Remove old lane history (keep last 30 seconds)
+    for i = #GameState.laneHistory, 1, -1 do
+        if currentTime - GameState.laneHistory[i].time > 30 then
+            table.remove(GameState.laneHistory, i)
+        else
+            break
+        end
+    end
+
+    -- Count unique lanes in recent history
+    local recentLanes = {}
+    for _, entry in ipairs(GameState.laneHistory) do
+        recentLanes[entry.lane] = true
+    end
+
+    local uniqueLanes = 0
+    for _ in pairs(recentLanes) do
+        uniqueLanes = uniqueLanes + 1
+    end
+
+    -- Dynamic multiplier based on lane diversity
+    if uniqueLanes >= 4 then
+        return 2.0
+    elseif uniqueLanes >= 3 then
+        return 1.5
+    elseif uniqueLanes >= 2 then
+        return 1.2
+    else
+        return 1.0
+    end
+end
+
+local function addScore(basePoints, player, isOvertake)
     local speedMult = calculateSpeedMultiplier(player.speedKmh)
     local proximityMult = calculateProximityBonus(player.position)
     local laneMult = updateLaneDiversity(player.position)
 
-    -- Update individual combo counters
+    -- Update individual combo counters with real-time tracking
     GameState.combos.speed = speedMult
     GameState.combos.proximity = proximityMult
     GameState.combos.laneDiversity = laneMult
-    GameState.combos.overtake = GameState.combos.overtake + 0.1
+
+    -- Only increase overtake combo for actual overtakes
+    if isOvertake then
+        GameState.combos.overtake = math.min(5.0, GameState.combos.overtake + 0.2)
+        GameState.stats.totalOvertakes = GameState.stats.totalOvertakes + 1
+    end
 
     local totalMultiplier = GameState.comboMultiplier * speedMult * proximityMult * laneMult
     local points = math.ceil(basePoints * totalMultiplier)
 
     GameState.currentScore = GameState.currentScore + points
     GameState.comboMultiplier = GameState.comboMultiplier + 0.1
-    
-    -- Intelligent Personal Best checking
-    if GameState.currentScore > GameState.personalBest then
+
+    -- Live Personal Best alerts (don't update PB value until run ends)
+    if GameState.runState == 'active' and GameState.currentScore > GameState.personalBest then
         local improvement = GameState.currentScore - GameState.personalBest
         local improvementPercent = (improvement / math.max(GameState.personalBest, 1)) * 100
 
-        -- Only notify for significant improvements
-        local shouldNotify = false
+        -- Show live alerts for significant improvements
+        local shouldAlert = false
         if GameState.personalBest == 0 and GameState.currentScore >= 50 then
             -- First meaningful score
-            shouldNotify = true
+            shouldAlert = true
         elseif GameState.personalBest > 0 and (improvementPercent >= 10 or improvement >= 100) then
             -- 10% improvement or 100+ point improvement
-            shouldNotify = true
+            shouldAlert = true
         elseif GameState.currentScore >= GameState.personalBest + 500 then
-            -- Always notify for 500+ point improvements
-            shouldNotify = true
+            -- Always alert for 500+ point improvements
+            shouldAlert = true
         end
 
-        GameState.personalBest = GameState.currentScore
-        savePersonalBest()
-
-        if shouldNotify then
+        -- Show live alert but don't update PB yet
+        if shouldAlert and not GameState.pendingPBUpdate then
+            GameState.pendingPBUpdate = true
             if GameState.personalBest <= 100 then
-                addNotification(string.format('New Personal Best: %d pts!', GameState.personalBest), 'record', 4.0)
+                addNotification(string.format('Beating PB: %d pts!', GameState.currentScore), 'success', 3.0)
             else
-                addNotification(string.format('NEW PB: %d pts (+%d)', GameState.personalBest, improvement), 'record', 5.0)
+                addNotification(string.format('BEATING PB: %d pts (+%d)', GameState.currentScore, improvement), 'success', 3.0)
             end
-            playSound(SOUNDS.PERSONAL_BEST, 0.7)
-
-            -- Add special PB overlay animation
-            addPersonalBestOverlay(GameState.personalBest, improvement)
+            playSound(SOUNDS.NEAR_MISS, 0.5) -- Softer sound for live alerts
         end
     end
     
     return points
 end
 
-local function handleCollision()
+-- Enhanced collision detection system
+local function handleCollision(collisionType, collisionData)
     -- Prevent multiple collision handling for the same collision
     if GameState.lastCollisionTime and (GameState.timePassed - GameState.lastCollisionTime) < 2.0 then
         return -- Ignore rapid collision events
@@ -335,8 +696,10 @@ local function handleCollision()
 
     GameState.lastCollisionTime = GameState.timePassed
     GameState.collisionCount = GameState.collisionCount + 1
+    GameState.stats.totalCollisions = GameState.stats.totalCollisions + 1
 
-    ac.log(string.format('Collision detected! Count: %d, Lives before: %d', GameState.collisionCount, GameState.lives))
+    ac.log(string.format('Collision detected! Type: %s, Count: %d, Lives before: %d',
+           collisionType or 'unknown', GameState.collisionCount, GameState.lives))
 
     if GameState.collisionCount <= 3 then
         local penalty = CONFIG.COLLISION_PENALTIES[GameState.collisionCount]
@@ -350,6 +713,7 @@ local function handleCollision()
 
         -- Reset combo multiplier
         GameState.comboMultiplier = 1.0
+        GameState.combos.overtake = 1.0
 
         ac.log(string.format('Penalty applied: -%d points, Lives after: %d', lostPoints, GameState.lives))
 
@@ -359,12 +723,14 @@ local function handleCollision()
             GameState.lives = CONFIG.LIVES_COUNT
             GameState.collisionCount = 0
             GameState.comboMultiplier = 1.0
+            GameState.combos = {speed = 1.0, proximity = 1.0, laneDiversity = 1.0, overtake = 1.0}
             GameState.lanesDriven = {}
 
             addNotification('SCORE RESET - LIVES RESTORED', 'error', 4.0)
             ac.log('Full reset applied - lives restored')
         else
-            addNotification(string.format('COLLISION! -%d pts (%d/3 lives)', lostPoints, GameState.lives), 'warning', 3.0)
+            local collisionMsg = string.format('COLLISION! -%d pts (%d/3 lives)', lostPoints, GameState.lives)
+            addNotification(collisionMsg, 'warning', 3.0)
         end
 
         playSound(SOUNDS.COLLISION, 0.6)
@@ -372,6 +738,84 @@ local function handleCollision()
         -- Add collision overlay animation
         addCollisionOverlay()
     end
+end
+
+-- Simplified collision detection methods (removed damage monitoring)
+local function detectCollisions(player)
+    local collisionDetected = false
+    local collisionType = nil
+
+    -- Method 1: Check collidedWith property (legacy AC method)
+    if player.collidedWith and player.collidedWith > 0 then
+        collisionDetected = true
+        collisionType = "car-to-car"
+        ac.log(string.format('Collision Method 1: collidedWith = %d', player.collidedWith))
+    end
+
+    -- Method 2: Impact detection via sudden velocity/speed changes
+    if GameState.lastVelocity and GameState.lastSpeed then
+        local velocityChange = (player.velocity - GameState.lastVelocity):length()
+        local speedChange = math.abs(player.speedKmh - GameState.lastSpeed)
+
+        -- Detect significant impact (collision with cars, walls, barriers)
+        if velocityChange > 12 and speedChange > 15 and player.speedKmh > 20 then
+            collisionDetected = true
+            collisionType = "impact-detection"
+            ac.log(string.format('Collision Method 2: velocity change = %.2f, speed change = %.2f',
+                   velocityChange, speedChange))
+        end
+    end
+
+    -- Method 3: Proximity-based collision detection (cars, NPCs, static objects)
+    local sim = ac.getSim()
+
+    -- Check proximity to other cars (real players and NPCs)
+    for i = 2, sim.carsCount do
+        local car = ac.getCarState(i)
+        if car and car.position:closerToThan(player.position, 4) then
+            local relativeSpeed = (player.velocity - car.velocity):length()
+            local speedDrop = (GameState.lastSpeed or 0) - player.speedKmh
+
+            -- Collision if very close with sudden speed drop or high relative speed
+            if (relativeSpeed > 20 or speedDrop > 25) and player.speedKmh < 80 then
+                collisionDetected = true
+                collisionType = car.isConnected and "player-collision" or "npc-collision"
+                ac.log(string.format('Collision Method 3: %s (rel speed: %.1f, speed drop: %.1f)',
+                       collisionType, relativeSpeed, speedDrop))
+                break
+            end
+        end
+    end
+
+    -- Method 4: Static object collision detection (walls, barriers)
+    if not collisionDetected and GameState.lastSpeed then
+        local speedDrop = GameState.lastSpeed - player.speedKmh
+        local velocityChange = GameState.lastVelocity and (player.velocity - GameState.lastVelocity):length() or 0
+
+        -- Detect collision with static objects (sudden stop without nearby cars)
+        if speedDrop > 30 and velocityChange > 10 and player.speedKmh < 30 then
+            -- Check if no cars are nearby (indicating wall/barrier collision)
+            local nearbyCarCount = 0
+            for i = 2, sim.carsCount do
+                local car = ac.getCarState(i)
+                if car and car.position:closerToThan(player.position, 8) then
+                    nearbyCarCount = nearbyCarCount + 1
+                end
+            end
+
+            if nearbyCarCount == 0 then
+                collisionDetected = true
+                collisionType = "wall-collision"
+                ac.log(string.format('Collision Method 4: wall collision (speed drop: %.1f)', speedDrop))
+            end
+        end
+    end
+
+    -- Store current values for next frame comparison
+    GameState.lastVelocity = player.velocity
+    GameState.lastSpeed = player.speedKmh
+
+    return collisionDetected, collisionType
 end
 
 -- Add collision overlay animation
@@ -429,9 +873,27 @@ function script.update(dt)
     -- Update car tracking
     updateCarTracking(dt, player)
     
-    -- Update scoring logic
-    updateScoring(dt, player)
-    
+    -- Update run state management
+    checkRunStartConditions(player)
+    checkRunEndConditions(player)
+
+    -- Handle reset timer
+    if GameState.resetTimer and GameState.resetTimer > 0 then
+        GameState.resetTimer = GameState.resetTimer - dt
+        if GameState.resetTimer <= 0 then
+            resetForNewRun()
+            GameState.resetTimer = nil
+        end
+    end
+
+    -- Update scoring logic (only during active runs)
+    if GameState.runState == 'active' then
+        updateScoring(dt, player)
+    end
+
+    -- Update real-time combos
+    updateRealTimeCombos(dt, player)
+
     -- Update animations
     updateAnimations(dt)
 end
@@ -456,14 +918,19 @@ function updateCarTracking(dt, player)
             collided = false,
             drivingAlong = true,
             nearMiss = false,
-            maxPosDot = -1
+            maxPosDot = -1,
+            lastOvertakeTime = 0
         }
     end
 
-    -- Check for collisions
-    if player.collidedWith > 0 then
-        handleCollision()
+    -- Enhanced collision detection
+    local collisionDetected, collisionType = detectCollisions(player)
+    if collisionDetected and not GameState.collisionProcessed then
+        GameState.collisionProcessed = true
+        handleCollision(collisionType)
         return
+    elseif not collisionDetected then
+        GameState.collisionProcessed = false
     end
 
     -- Track other cars for overtaking
@@ -483,19 +950,30 @@ function updateCarTracking(dt, player)
                     local posDot = math.dot(posDir, car.look)
                     state.maxPosDot = math.max(state.maxPosDot, posDot)
 
-                    if posDot < -0.5 and state.maxPosDot > 0.5 then
-                        -- Successful overtake
-                        local points = addScore(10, player)
-                        addNotification(string.format('+%d pts - Overtake!', points), 'success')
-                        playSound(SOUNDS.OVERTAKE)
+                    if posDot < -0.5 and state.maxPosDot > 0.5 and not state.overtaken then
+                        -- Enhanced overtake detection for dense traffic
+                        local currentTime = GameState.timePassed
 
-                        state.overtaken = true
+                        -- Check if this specific car was overtaken very recently (0.3s window)
+                        if not state.lastOvertakeTime or (currentTime - state.lastOvertakeTime) > 0.3 then
+                            -- Successful overtake of this specific car
+                            local points = addScore(10, player, true) -- Mark as overtake
+                            addNotification(string.format('+%d pts - Overtake!', points), 'success')
+                            playSound(SOUNDS.OVERTAKE)
 
-                        -- Near miss bonus
-                        if car.position:closerToThan(player.position, CONFIG.NEAR_MISS_DISTANCE) then
-                            local bonusPoints = addScore(5, player)
-                            addNotification(string.format('+%d pts - Near Miss!', bonusPoints), 'success')
-                            playSound(SOUNDS.NEAR_MISS)
+                            state.overtaken = true
+                            state.lastOvertakeTime = currentTime
+
+                            -- Near miss bonus
+                            if car.position:closerToThan(player.position, CONFIG.NEAR_MISS_DISTANCE) then
+                                local bonusPoints = addScore(5, player, false)
+                                addNotification(string.format('+%d pts - Near Miss!', bonusPoints), 'success')
+                                playSound(SOUNDS.NEAR_MISS)
+                                GameState.stats.totalNearMisses = GameState.stats.totalNearMisses + 1
+                            end
+
+                            -- Check for consecutive overtake bonus
+                            checkConsecutiveOvertakes(currentTime, i)
                         end
                     end
                 end
@@ -657,33 +1135,8 @@ function script.drawUI()
     end
 end
 
--- Handle UI controls (B for main UI, N for PB UI)
+-- Enhanced UI controls with direct drag-and-drop
 function handleUIControls()
-    -- Main UI move mode toggle (B key)
-    local uiMoveKey = ac.isKeyDown(ac.KeyIndex.B)
-    if uiMoveKey and not GameState.lastUiMoveKey then
-        GameState.uiMoveMode = not GameState.uiMoveMode
-        addNotification(GameState.uiMoveMode and 'Main UI Move Mode ON' or 'Main UI Move Mode OFF', 'info')
-    end
-    GameState.lastUiMoveKey = uiMoveKey
-
-    -- PB UI move mode toggle (N key)
-    local pbMoveKey = ac.isKeyDown(ac.KeyIndex.N)
-    if pbMoveKey and not GameState.lastPbMoveKey then
-        GameState.pbUiMoveMode = not GameState.pbUiMoveMode
-        addNotification(GameState.pbUiMoveMode and 'PB UI Move Mode ON' or 'PB UI Move Mode OFF', 'info')
-    end
-    GameState.lastPbMoveKey = pbMoveKey
-
-    -- UI position updates
-    if ui.mouseClicked(ui.MouseButton.Right) then
-        if GameState.uiMoveMode then
-            GameState.uiPosition = ui.mousePos()
-        elseif GameState.pbUiMoveMode then
-            GameState.pbUiPosition = ui.mousePos()
-        end
-    end
-
     -- Sound toggle (M key)
     local muteKey = ac.isKeyDown(ac.KeyIndex.M)
     if muteKey and not GameState.lastMuteKey then
@@ -696,12 +1149,14 @@ function handleUIControls()
     local uiToggleKey = ac.isKeyDown(ac.KeyIndex.Control) and ac.isKeyDown(ac.KeyIndex.D)
     if uiToggleKey and not GameState.lastUiToggleKey then
         GameState.uiVisible = not GameState.uiVisible
+        addNotification(GameState.uiVisible and 'Main UI ON' or 'Main UI OFF', 'info')
     end
     GameState.lastUiToggleKey = uiToggleKey
 
     local pbToggleKey = ac.isKeyDown(ac.KeyIndex.Control) and ac.isKeyDown(ac.KeyIndex.P)
     if pbToggleKey and not GameState.lastPbToggleKey then
         GameState.pbUiVisible = not GameState.pbUiVisible
+        addNotification(GameState.pbUiVisible and 'PB UI ON' or 'PB UI OFF', 'info')
     end
     GameState.lastPbToggleKey = pbToggleKey
 
@@ -714,6 +1169,131 @@ function handleUIControls()
     GameState.lastDebugKey = debugKey
 end
 
+-- Direct drag-and-drop functionality for UI panels
+function handleUIDragAndDrop(windowName, currentPos, windowSize)
+    local mousePos = ui.mousePos()
+    local windowRect = {
+        min = currentPos,
+        max = currentPos + windowSize
+    }
+
+    -- Check if mouse is over the window
+    local mouseOverWindow = mousePos.x >= windowRect.min.x and mousePos.x <= windowRect.max.x and
+                           mousePos.y >= windowRect.min.y and mousePos.y <= windowRect.max.y
+
+    -- Handle drag start
+    if mouseOverWindow and ui.mouseClicked(ui.MouseButton.Left) then
+        GameState.dragState = {
+            window = windowName,
+            offset = mousePos - currentPos,
+            dragging = true
+        }
+    end
+
+    -- Handle dragging
+    if GameState.dragState and GameState.dragState.window == windowName and GameState.dragState.dragging then
+        if ui.mouseDown(ui.MouseButton.Left) then
+            -- Update position while dragging
+            local newPos = mousePos - GameState.dragState.offset
+            return newPos
+        else
+            -- End drag
+            GameState.dragState = nil
+        end
+    end
+
+    return currentPos
+end
+
+-- Enhanced consecutive overtakes tracking for dense traffic
+function checkConsecutiveOvertakes(currentTime, carIndex)
+    -- Initialize overtake history if needed
+    if not GameState.overtakeHistory then
+        GameState.overtakeHistory = {}
+    end
+
+    -- Add current overtake to history with car index
+    table.insert(GameState.overtakeHistory, {
+        time = currentTime,
+        carIndex = carIndex or 0,
+        processed = false
+    })
+
+    -- Remove old overtakes (keep last 15 seconds)
+    for i = #GameState.overtakeHistory, 1, -1 do
+        if currentTime - GameState.overtakeHistory[i].time > 15 then
+            table.remove(GameState.overtakeHistory, i)
+        else
+            break
+        end
+    end
+
+    -- Count recent unique car overtakes (within 10 seconds for rapid succession)
+    local recentOvertakes = 0
+    local uniqueCars = {}
+
+    for _, overtake in ipairs(GameState.overtakeHistory) do
+        if currentTime - overtake.time <= 10 then
+            if not uniqueCars[overtake.carIndex] then
+                uniqueCars[overtake.carIndex] = true
+                recentOvertakes = recentOvertakes + 1
+            end
+        end
+    end
+
+    -- Apply consecutive overtake bonuses based on unique cars overtaken
+    if recentOvertakes >= 5 then
+        GameState.combos.overtake = math.min(3.0, GameState.combos.overtake + 0.5)
+        addNotification('OVERTAKE FRENZY! +Combo', 'success', 2.0)
+        ac.log(string.format('Overtake frenzy: %d unique cars in 10s', recentOvertakes))
+    elseif recentOvertakes >= 3 then
+        GameState.combos.overtake = math.min(2.5, GameState.combos.overtake + 0.3)
+        addNotification('Overtake Streak!', 'success', 1.5)
+        ac.log(string.format('Overtake streak: %d unique cars in 10s', recentOvertakes))
+    end
+
+    -- Check for simultaneous overtakes (within 2 seconds)
+    local simultaneousOvertakes = 0
+    for _, overtake in ipairs(GameState.overtakeHistory) do
+        if math.abs(currentTime - overtake.time) <= 2.0 and overtake.carIndex ~= (carIndex or 0) then
+            simultaneousOvertakes = simultaneousOvertakes + 1
+        end
+    end
+
+    if simultaneousOvertakes >= 2 then
+        addNotification('Multi-Overtake!', 'success', 1.5)
+        GameState.combos.overtake = math.min(2.8, GameState.combos.overtake + 0.2)
+    end
+end
+
+-- Real-time combo updates (called every frame)
+function updateRealTimeCombos(dt, player)
+    -- Update speed combo in real-time
+    GameState.combos.speed = calculateSpeedMultiplier(player.speedKmh)
+
+    -- Update proximity combo in real-time
+    GameState.combos.proximity = calculateProximityBonus(player.position)
+
+    -- Update lane diversity combo in real-time
+    GameState.combos.laneDiversity = updateLaneDiversity(player.position)
+
+    -- Decay overtake combo over time if no recent overtakes
+    if GameState.overtakeHistory and #GameState.overtakeHistory == 0 then
+        GameState.combos.overtake = math.max(1.0, GameState.combos.overtake - dt * 0.2)
+    end
+
+    -- Update master combo multiplier based on individual combos
+    local avgCombo = (GameState.combos.speed + GameState.combos.proximity +
+                     GameState.combos.laneDiversity + GameState.combos.overtake) / 4
+    GameState.comboMultiplier = math.max(1.0, avgCombo)
+
+    -- Track best combo achieved
+    if GameState.comboMultiplier > GameState.stats.bestCombo then
+        GameState.stats.bestCombo = GameState.comboMultiplier
+    end
+end
+end
+
 -- Render the new Current Score UI with separate combo counters
 function renderCurrentScoreUI(player, speedRatio)
     local colorDark = rgbm(0.05, 0.05, 0.1, 0.95)
@@ -721,7 +1301,11 @@ function renderCurrentScoreUI(player, speedRatio)
     local colorAccent = hsv2rgb(speedRatio * 0.33, 0.8, 1.0)
     local colorCombo = hsv2rgb(GameState.comboColorHue / 360, 0.7, 1.0)
 
-    ui.beginTransparentWindow('currentScore', GameState.uiPosition, vec2(450, 350), true)
+    -- Handle drag-and-drop for main UI
+    local windowSize = vec2(450, 350)
+    GameState.uiPosition = handleUIDragAndDrop('currentScore', GameState.uiPosition, windowSize)
+
+    ui.beginTransparentWindow('currentScore', GameState.uiPosition, windowSize, true)
     ui.beginOutline()
 
     -- Modern header with gradient effect
@@ -822,7 +1406,11 @@ function renderPersonalBestUI()
     local colorGold = rgbm(1, 0.8, 0.2, 1.0)
     local colorSilver = rgbm(0.8, 0.8, 0.9, 1.0)
 
-    ui.beginTransparentWindow('personalBest', GameState.pbUiPosition, vec2(300, 200), true)
+    -- Handle drag-and-drop for PB UI
+    local windowSize = vec2(300, 200)
+    GameState.pbUiPosition = handleUIDragAndDrop('personalBest', GameState.pbUiPosition, windowSize)
+
+    ui.beginTransparentWindow('personalBest', GameState.pbUiPosition, windowSize, true)
     ui.beginOutline()
 
     -- Header
@@ -1055,11 +1643,28 @@ function renderDebugPanel()
 
     ui.dummy(vec2(0, 5))
 
-    -- Collision System
+    -- Simplified Collision System Debug
     ui.textColored('=== COLLISION SYSTEM ===', rgbm(1, 0.8, 0.8, 1))
-    ui.text(string.format('Collided With: %d', player.collidedWith))
-    ui.text(string.format('Collision Processed: %s', GameState.collisionProcessed and 'YES' or 'NO'))
+    local collisionDetected, collisionType = detectCollisions(player)
+    ui.text(string.format('Detection Status: %s', collisionDetected and 'ACTIVE' or 'NONE'))
+    if collisionDetected then
+        ui.textColored(string.format('Type: %s', collisionType or 'unknown'), rgbm(1, 0.5, 0.5, 1))
+    end
+    ui.text(string.format('Legacy collidedWith: %d', player.collidedWith or -1))
+    ui.text(string.format('Lives: %d/3', GameState.lives))
+    ui.text(string.format('Collision Count: %d', GameState.collisionCount))
+    ui.text(string.format('Total Collisions: %d', GameState.stats.totalCollisions))
+    ui.text(string.format('Run State: %s', GameState.runState))
     ui.text(string.format('Last Collision: %.1fs ago', GameState.timePassed - (GameState.lastCollisionTime or 0)))
+
+    -- Collision detection method details
+    ui.dummy(vec2(0, 3))
+    ui.textColored('Detection Methods:', rgbm(0.8, 0.8, 0.8, 1))
+    ui.text('✓ Legacy collidedWith property')
+    ui.text('✓ Impact detection (velocity/speed)')
+    ui.text('✓ Proximity collision (players/NPCs)')
+    ui.text('✓ Static object collision (walls)')
+    ui.text('✗ Damage monitoring (removed)')
 
     ui.dummy(vec2(0, 5))
 
