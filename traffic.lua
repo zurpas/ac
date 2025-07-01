@@ -1292,8 +1292,14 @@ local function drawSkewedText(x, y, width, height, text, color, fontSize)
     local centerX = x + width * 0.5 + skewOffset * 0.5
     local centerY = y + height * 0.5
 
-    ui.pushFont(ui.Font.Main)
-    if fontSize then ui.pushStyleVar(ui.StyleVar.FontSize, fontSize) end
+    -- Choose appropriate font based on fontSize parameter
+    if fontSize and fontSize >= 24 then
+        ui.pushFont(ui.Font.Huge)
+    elseif fontSize and fontSize >= 18 then
+        ui.pushFont(ui.Font.Title)
+    else
+        ui.pushFont(ui.Font.Main)
+    end
 
     -- Estimate text size for centering (since ui.calcTextSize doesn't exist in CSP)
     local estimatedWidth = string.len(text) * (fontSize or 14) * 0.6
@@ -1301,7 +1307,6 @@ local function drawSkewedText(x, y, width, height, text, color, fontSize)
     ui.setCursor(vec2(centerX - estimatedWidth * 0.5, centerY - estimatedHeight * 0.5))
     ui.textColored(text, color)
 
-    if fontSize then ui.popStyleVar() end
     ui.popFont()
 end
 
@@ -1437,15 +1442,13 @@ local function renderMainScoreBox(baseX, baseY)
     local centerX = baseX + scoreWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
     local centerY = baseY + scoreHeight * 0.5
 
-    ui.pushFont(ui.Font.Main)
-    ui.pushStyleVar(ui.StyleVar.FontSize, 28)
+    ui.pushFont(ui.Font.Huge)  -- Use Huge font for large score text (28px equivalent)
 
     local estimatedWidth = string.len(scoreText) * 28 * 0.6
     local estimatedHeight = 28
     ui.setCursor(vec2(centerX - estimatedWidth * 0.5, centerY - estimatedHeight * 0.5))
     ui.textColored(scoreText, textColor)
 
-    ui.popStyleVar()
     ui.popFont()
 
     -- Draw timer box
@@ -1460,15 +1463,13 @@ local function renderMainScoreBox(baseX, baseY)
     local timerCenterX = timerX + timerWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
     local timerCenterY = baseY + scoreHeight * 0.5
 
-    ui.pushFont(ui.Font.Main)
-    ui.pushStyleVar(ui.StyleVar.FontSize, 18)
+    ui.pushFont(ui.Font.Title)  -- Use Title font for timer text (18px equivalent)
 
     local estimatedWidth = string.len(timerText) * 18 * 0.6
     local estimatedHeight = 18
     ui.setCursor(vec2(timerCenterX - estimatedWidth * 0.5, timerCenterY - estimatedHeight * 0.5))
     ui.textColored(timerText, UI_COLORS.WHITE)
 
-    ui.popStyleVar()
     ui.popFont()
 end
 
