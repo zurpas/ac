@@ -1809,7 +1809,6 @@ function updateRealTimeCombos(dt, player)
         GameState.stats.bestCombo = GameState.comboMultiplier
     end
 end
-end
 
 -- Enhanced Current Score UI with HTML-inspired design
 function renderCurrentScoreUI(player, speedRatio)
