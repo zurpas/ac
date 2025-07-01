@@ -73,6 +73,8 @@ local GameState = {
     runEndTime = 0,
     runStartScore = 0,
     pendingPBUpdate = false,
+    milestone50Shown = false,
+    milestone75Shown = false,
 
     -- Scoring state
     comboMultiplier = 1.0,
@@ -90,6 +92,7 @@ local GameState = {
     pbUiPosition = vec2(50, 200), -- Separate position for Personal Best UI
     uiMoveMode = false,
     pbUiMoveMode = false,
+    dragOffset = vec2(0, 0), -- For drag and drop functionality
     uiVisible = true,
     pbUiVisible = true,
 
@@ -416,6 +419,10 @@ local function endRun()
             else
                 addNotification(string.format('NEW PB: %d pts (+%d)', GameState.personalBest, improvement), 'record', 5.0)
             end
+
+            -- Trigger new PB visual alert
+            triggerVisualAlert('new_pb', string.format('NEW PB: %d PTS', GameState.personalBest), 4.0)
+
             playSound(SOUNDS.PERSONAL_BEST, 0.7)
             addPersonalBestOverlay(GameState.personalBest, improvement)
         else
@@ -727,10 +734,17 @@ local function handleCollision(collisionType, collisionData)
             GameState.lanesDriven = {}
 
             addNotification('SCORE RESET - LIVES RESTORED', 'error', 4.0)
+
+            -- Trigger crash visual alert
+            triggerVisualAlert('crash', 'GAME OVER!', 3.5)
+
             ac.log('Full reset applied - lives restored')
         else
             local collisionMsg = string.format('COLLISION! -%d pts (%d/3 lives)', lostPoints, GameState.lives)
             addNotification(collisionMsg, 'warning', 3.0)
+
+            -- Trigger collision visual alert
+            triggerVisualAlert('collision', string.format('-%d PTS', lostPoints), 2.5)
         end
 
         playSound(SOUNDS.COLLISION, 0.6)
@@ -1088,6 +1102,509 @@ function updateAnimations(dt)
 end
 
 -- ============================================================================
+-- ENHANCED UI DESIGN SYSTEM (HTML-INSPIRED)
+-- ============================================================================
+
+-- Color palette matching HTML design
+local UI_COLORS = {
+    -- Base colors
+    DARK_BG = rgbm(0.067, 0.067, 0.067, 1),        -- #111111
+    BORDER_DARK = rgbm(0.2, 0.2, 0.2, 1),          -- #333333
+    WHITE = rgbm(1, 1, 1, 1),                       -- #ffffff
+    BLACK = rgbm(0, 0, 0, 1),                       -- #000000
+
+    -- Accent colors
+    ORANGE_ACCENT = rgbm(0.71, 0.42, 0.18, 1),     -- #b56b2f
+    ORANGE_BRIGHT = rgbm(1, 0.6, 0.2, 1),          -- Enhanced orange
+
+    -- State colors
+    COLLISION_BG = rgbm(1, 0.87, 0.27, 1),         -- #ffdd44
+    COLLISION_ACCENT = rgbm(1, 0.53, 0, 1),        -- #ff8800
+    CRASH_BG = rgbm(1, 0.27, 0.27, 1),             -- #ff4444
+    CRASH_ACCENT = rgbm(0.8, 0, 0, 1),             -- #cc0000
+
+    -- Glow effects
+    GLOW_PURPLE = rgbm(0.68, 0.31, 1, 0.8),        -- #ae50ff
+    GLOW_PINK = rgbm(0.83, 0.31, 1, 0.8),          -- #d44fff
+    GLOW_CYAN = rgbm(0, 0.92, 1, 0.9),             -- #00eaff
+    GLOW_YELLOW = rgbm(1, 0.87, 0.27, 0.9),        -- #ffdd44
+    GLOW_RED = rgbm(1, 0.27, 0.27, 0.9),           -- #ff4444
+
+    -- Transparency variants
+    DARK_BG_ALPHA = rgbm(0.067, 0.067, 0.067, 0.95),
+    WHITE_ALPHA = rgbm(1, 1, 1, 0.95),
+    BLACK_ALPHA = rgbm(0, 0, 0, 0.8),
+}
+
+-- UI state management for animations and effects
+local UIState = {
+    -- Animation timers
+    glowTimer = 0,
+    particleTimer = 0,
+    shakeTimer = 0,
+    popTimer = 0,
+
+    -- Visual states
+    currentState = 'normal', -- 'normal', 'collision', 'crash', 'new_pb'
+    showingAlert = false,
+    alertTimer = 0,
+    alertMessage = '',
+
+    -- Animation properties
+    shakeOffset = 0,
+    popScale = 1.0,
+    glowIntensity = 0,
+    borderPhase = 0,
+
+    -- Particle system
+    particles = {},
+
+    -- Score display
+    lastDisplayedScore = 0,
+    scoreRolling = false,
+    scoreRollTimer = 0,
+}
+
+-- Particle system for visual effects
+local function createParticle(x, y, color, type)
+    local particle = {
+        x = x + math.random(-20, 20),
+        y = y + math.random(-10, 10),
+        vx = math.random(-50, 50),
+        vy = math.random(-80, -20),
+        life = 0,
+        maxLife = type == 'new_pb' and 2.0 or (type == 'enhanced' and 1.6 or 1.4),
+        size = type == 'new_pb' and 14 or (type == 'enhanced' and 12 or 10),
+        color = color,
+        type = type
+    }
+    table.insert(UIState.particles, particle)
+end
+
+-- Update particle system
+local function updateParticles(dt)
+    for i = #UIState.particles, 1, -1 do
+        local p = UIState.particles[i]
+        p.life = p.life + dt
+
+        -- Update position
+        p.x = p.x + p.vx * dt
+        p.y = p.y + p.vy * dt
+        p.vy = p.vy + 100 * dt -- Gravity
+
+        -- Remove expired particles
+        if p.life >= p.maxLife then
+            table.remove(UIState.particles, i)
+        end
+    end
+end
+
+-- Render particles
+local function renderParticles()
+    for _, p in ipairs(UIState.particles) do
+        local alpha = 1 - (p.life / p.maxLife)
+        local size = p.size * (1 - p.life / p.maxLife * 0.7)
+
+        if alpha > 0 and size > 1 then
+            local color = rgbm(p.color.r, p.color.g, p.color.b, alpha)
+            ui.drawCircleFilled(vec2(p.x, p.y), size * 0.5, color, 12)
+
+            -- Add glow effect for special particles
+            if p.type == 'new_pb' then
+                ui.drawCircle(vec2(p.x, p.y), size * 0.7, UI_COLORS.GLOW_CYAN, 2, 12)
+            end
+        end
+    end
+end
+
+-- ============================================================================
+-- SKEWED PARALLELOGRAM UI FUNCTIONS
+-- ============================================================================
+
+-- Calculate skewed parallelogram points (simulating CSS skewX(-15deg))
+local function getSkewedRect(x, y, width, height)
+    local skewOffset = height * 0.27 -- Approximates -15 degree skew
+    return {
+        vec2(x + skewOffset, y),                    -- Top-left
+        vec2(x + width + skewOffset, y),            -- Top-right
+        vec2(x + width, y + height),                -- Bottom-right
+        vec2(x, y + height)                         -- Bottom-left
+    }
+end
+
+-- Draw skewed rectangle with border
+local function drawSkewedRect(x, y, width, height, fillColor, borderColor, borderWidth)
+    local points = getSkewedRect(x, y, width, height)
+
+    -- Fill
+    if fillColor then
+        ui.drawQuadFilled(points[1], points[2], points[3], points[4], fillColor)
+    end
+
+    -- Border
+    if borderColor and borderWidth and borderWidth > 0 then
+        ui.drawQuad(points[1], points[2], points[3], points[4], borderColor, borderWidth)
+    end
+
+    return points
+end
+
+-- Draw skewed rectangle with glow effect
+local function drawSkewedRectWithGlow(x, y, width, height, fillColor, glowColor, glowIntensity)
+    local points = getSkewedRect(x, y, width, height)
+
+    -- Glow effect (multiple passes with increasing size and decreasing opacity)
+    if glowColor and glowIntensity > 0 then
+        for i = 1, 3 do
+            local glowSize = i * 2
+            local glowAlpha = glowIntensity * (0.4 - i * 0.1)
+            local glowPoints = getSkewedRect(x - glowSize, y - glowSize, width + glowSize * 2, height + glowSize * 2)
+            local glowColorWithAlpha = rgbm(glowColor.r, glowColor.g, glowColor.b, glowAlpha)
+            ui.drawQuad(glowPoints[1], glowPoints[2], glowPoints[3], glowPoints[4], glowColorWithAlpha, 2)
+        end
+    end
+
+    -- Main rectangle
+    ui.drawQuadFilled(points[1], points[2], points[3], points[4], fillColor)
+
+    return points
+end
+
+-- Draw text centered in skewed rectangle
+local function drawSkewedText(x, y, width, height, text, color, fontSize)
+    -- Calculate center position accounting for skew
+    local skewOffset = height * 0.27
+    local centerX = x + width * 0.5 + skewOffset * 0.5
+    local centerY = y + height * 0.5
+
+    ui.pushFont(ui.Font.Main)
+    if fontSize then ui.pushStyleVar(ui.StyleVar.FontSize, fontSize) end
+
+    local textSize = ui.calcTextSize(text)
+    ui.setCursorPos(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
+    ui.textColored(text, color)
+
+    if fontSize then ui.popStyleVar() end
+    ui.popFont()
+end
+
+-- Animate border chase effect (like CSS animation)
+local function getBorderChaseColor(baseColor, phase, intensity)
+    -- Create moving highlight effect
+    local highlight = math.sin(phase * math.pi * 2) * 0.5 + 0.5
+    local alpha = baseColor.a * intensity * (0.7 + highlight * 0.3)
+    return rgbm(baseColor.r, baseColor.g, baseColor.b, alpha)
+end
+
+-- ============================================================================
+-- ENHANCED STAT BOXES RENDERING
+-- ============================================================================
+
+-- Render individual stat box with skewed design
+local function renderStatBox(x, y, width, height, topText, bottomText, isTotal)
+    local fillColor = isTotal and UI_COLORS.ORANGE_ACCENT or UI_COLORS.DARK_BG
+    local borderColor = UI_COLORS.BORDER_DARK
+    local textColor = UI_COLORS.WHITE
+
+    -- Add shake effect if active
+    local shakeX = UIState.shakeTimer > 0 and UIState.shakeOffset or 0
+
+    -- Draw the skewed box
+    drawSkewedRect(x + shakeX, y, width, height, fillColor, borderColor, 2)
+
+    -- Draw text in two lines
+    local centerX = x + width * 0.5 + height * 0.27 * 0.5 + shakeX
+    local fontSize = isTotal and 20 or 16
+
+    ui.pushFont(ui.Font.Main)
+
+    -- Top text (multiplier value)
+    local topSize = ui.calcTextSize(topText)
+    ui.setCursorPos(vec2(centerX - topSize.x * 0.5, y + height * 0.25))
+    ui.textColored(topText, textColor)
+
+    -- Bottom text (label)
+    local bottomSize = ui.calcTextSize(bottomText)
+    ui.setCursorPos(vec2(centerX - bottomSize.x * 0.5, y + height * 0.65))
+    ui.textColored(bottomText, textColor)
+
+    ui.popFont()
+end
+
+-- Render the complete stat boxes row
+local function renderStatBoxesRow(baseX, baseY)
+    local boxWidth = 120
+    local boxHeight = 70
+    local totalBoxWidth = 130
+    local gap = 10
+
+    local currentX = baseX
+
+    -- Speed multiplier
+    local speedText = string.format('%.1fX', GameState.combos.speed)
+    renderStatBox(currentX, baseY, boxWidth, boxHeight, speedText, 'Speed', false)
+    currentX = currentX + boxWidth + gap
+
+    -- Proximity multiplier
+    local proximityText = string.format('%.1fX', GameState.combos.proximity)
+    renderStatBox(currentX, baseY, boxWidth, boxHeight, proximityText, 'Proximity', false)
+    currentX = currentX + boxWidth + gap
+
+    -- Lane diversity multiplier
+    local laneText = string.format('%.1fX', GameState.combos.laneDiversity)
+    renderStatBox(currentX, baseY, boxWidth, boxHeight, laneText, 'Lane', false)
+    currentX = currentX + boxWidth + gap
+
+    -- Overtake multiplier
+    local overtakeText = string.format('%.1fX', GameState.combos.overtake)
+    renderStatBox(currentX, baseY, boxWidth, boxHeight, overtakeText, 'Combo', false)
+    currentX = currentX + boxWidth + gap
+
+    -- Total multiplier (orange box)
+    local totalMultiplier = GameState.combos.speed * GameState.combos.proximity *
+                           GameState.combos.laneDiversity * GameState.combos.overtake
+    local totalText = string.format('%.1fX', totalMultiplier)
+    renderStatBox(currentX, baseY, totalBoxWidth, boxHeight, totalText, 'TOTAL', true)
+end
+
+-- ============================================================================
+-- ENHANCED SCORE DISPLAY
+-- ============================================================================
+
+-- Render the main score box with dynamic states
+local function renderMainScoreBox(baseX, baseY)
+    local scoreWidth = 630
+    local scoreHeight = 80
+    local timerWidth = 120
+    local gap = 10
+
+    -- Add shake effect if active
+    local shakeX = UIState.shakeTimer > 0 and UIState.shakeOffset or 0
+
+    -- Determine colors based on current state
+    local fillColor = UI_COLORS.WHITE
+    local textColor = UI_COLORS.BLACK
+    local glowColor = nil
+    local glowIntensity = 0
+
+    if UIState.currentState == 'collision' then
+        fillColor = UI_COLORS.COLLISION_BG
+        glowColor = UI_COLORS.GLOW_YELLOW
+        glowIntensity = UIState.glowIntensity
+    elseif UIState.currentState == 'crash' then
+        fillColor = UI_COLORS.CRASH_BG
+        glowColor = UI_COLORS.GLOW_RED
+        glowIntensity = UIState.glowIntensity
+    elseif UIState.currentState == 'new_pb' then
+        fillColor = UI_COLORS.WHITE
+        glowColor = UI_COLORS.GLOW_CYAN
+        glowIntensity = UIState.glowIntensity
+    end
+
+    -- Draw score box with glow effect
+    if glowColor and glowIntensity > 0 then
+        -- Animate border chase effect
+        UIState.borderPhase = UIState.borderPhase + 0.02
+        if UIState.borderPhase > 1 then UIState.borderPhase = 0 end
+
+        local chaseColor = getBorderChaseColor(glowColor, UIState.borderPhase, glowIntensity)
+        drawSkewedRectWithGlow(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, chaseColor, glowIntensity)
+    else
+        drawSkewedRect(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, UI_COLORS.BORDER_DARK, 2)
+    end
+
+    -- Draw score text
+    local scoreText = UIState.showingAlert and UIState.alertMessage or
+                     string.format('%s PTS', formatNumber(GameState.currentScore))
+
+    local centerX = baseX + scoreWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
+    local centerY = baseY + scoreHeight * 0.5
+
+    ui.pushFont(ui.Font.Main)
+    ui.pushStyleVar(ui.StyleVar.FontSize, 28)
+
+    local textSize = ui.calcTextSize(scoreText)
+    ui.setCursorPos(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
+    ui.textColored(scoreText, textColor)
+
+    ui.popStyleVar()
+    ui.popFont()
+
+    -- Draw timer box
+    local timerX = baseX + scoreWidth + gap
+    drawSkewedRect(timerX + shakeX, baseY, timerWidth, scoreHeight, UI_COLORS.BLACK, UI_COLORS.BORDER_DARK, 2)
+
+    -- Timer text
+    local minutes = math.floor(GameState.timePassed / 60)
+    local seconds = math.floor(GameState.timePassed % 60)
+    local timerText = string.format('%02d:%02d', minutes, seconds)
+
+    local timerCenterX = timerX + timerWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
+    local timerCenterY = baseY + scoreHeight * 0.5
+
+    ui.pushFont(ui.Font.Main)
+    ui.pushStyleVar(ui.StyleVar.FontSize, 18)
+
+    local timerSize = ui.calcTextSize(timerText)
+    ui.setCursorPos(vec2(timerCenterX - timerSize.x * 0.5, timerCenterY - timerSize.y * 0.5))
+    ui.textColored(timerText, UI_COLORS.WHITE)
+
+    ui.popStyleVar()
+    ui.popFont()
+end
+
+-- ============================================================================
+-- VISUAL STATE MANAGEMENT SYSTEM
+-- ============================================================================
+
+-- Trigger visual alert with particles and effects
+local function triggerVisualAlert(alertType, message, duration)
+    UIState.currentState = alertType
+    UIState.showingAlert = true
+    UIState.alertMessage = message
+    UIState.alertTimer = duration or 2.5
+    UIState.glowIntensity = 1.0
+    UIState.borderPhase = 0
+
+    -- Create particles based on alert type
+    local particleColor = UI_COLORS.WHITE
+    local particleType = 'standard'
+    local particleCount = 30
+
+    if alertType == 'collision' then
+        particleColor = UI_COLORS.COLLISION_BG
+        particleType = 'standard'
+        particleCount = 35
+    elseif alertType == 'crash' then
+        particleColor = UI_COLORS.CRASH_BG
+        particleType = 'enhanced'
+        particleCount = 40
+    elseif alertType == 'new_pb' then
+        particleColor = UI_COLORS.GLOW_CYAN
+        particleType = 'new_pb'
+        particleCount = 60
+    end
+
+    -- Emit particles from score box center
+    local scoreBoxX = GameState.uiPosition.x + 6 -- Account for margin
+    local scoreBoxY = GameState.uiPosition.y + 86 -- Below stat boxes
+    local centerX = scoreBoxX + 315 -- Center of 630px box
+    local centerY = scoreBoxY + 40  -- Center of 80px box
+
+    for i = 1, particleCount do
+        createParticle(centerX, centerY, particleColor, particleType)
+    end
+
+    -- Trigger shake effect for collisions
+    if alertType == 'collision' or alertType == 'crash' then
+        UIState.shakeTimer = 0.4
+    end
+
+    ac.log(string.format('Visual alert triggered: %s - %s', alertType, message))
+end
+
+-- Update visual state animations
+local function updateVisualState(dt)
+    -- Update timers
+    UIState.glowTimer = UIState.glowTimer + dt
+    UIState.particleTimer = UIState.particleTimer + dt
+
+    -- Update alert state
+    if UIState.showingAlert then
+        UIState.alertTimer = UIState.alertTimer - dt
+        if UIState.alertTimer <= 0 then
+            UIState.showingAlert = false
+            UIState.currentState = 'normal'
+            UIState.glowIntensity = 0
+        else
+            -- Fade out glow intensity
+            UIState.glowIntensity = UIState.alertTimer / 2.5
+        end
+    end
+
+    -- Update shake effect
+    if UIState.shakeTimer > 0 then
+        UIState.shakeTimer = UIState.shakeTimer - dt
+        UIState.shakeOffset = math.sin(UIState.shakeTimer * 50) * 5 * (UIState.shakeTimer / 0.4)
+        if UIState.shakeTimer <= 0 then
+            UIState.shakeOffset = 0
+        end
+    end
+
+    -- Update pop effect
+    if UIState.popTimer > 0 then
+        UIState.popTimer = UIState.popTimer - dt
+        local progress = 1 - (UIState.popTimer / 0.35)
+        if progress < 0.5 then
+            UIState.popScale = 1 + progress * 0.14 -- Scale up to 1.07
+        else
+            UIState.popScale = 1.07 - (progress - 0.5) * 0.14 -- Scale back to 1
+        end
+        if UIState.popTimer <= 0 then
+            UIState.popScale = 1.0
+        end
+    end
+
+    -- Update score rolling effect
+    if UIState.scoreRolling then
+        UIState.scoreRollTimer = UIState.scoreRollTimer - dt
+        if UIState.scoreRollTimer <= 0 then
+            UIState.scoreRolling = false
+            UIState.lastDisplayedScore = GameState.currentScore
+        end
+    end
+
+    -- Update particles
+    updateParticles(dt)
+end
+
+-- Trigger score pop animation
+local function triggerScorePop()
+    UIState.popTimer = 0.35
+    UIState.popScale = 1.0
+end
+
+-- Trigger score rolling effect (odometer style)
+local function triggerScoreRoll(newScore)
+    if newScore ~= UIState.lastDisplayedScore then
+        UIState.scoreRolling = true
+        UIState.scoreRollTimer = 0.3
+        triggerScorePop()
+    end
+end
+
+-- Check for milestone alerts (50%, 75% to PB)
+local function checkMilestoneAlerts()
+    if GameState.personalBest > 0 and GameState.runState == 'active' then
+        local percent = GameState.currentScore / GameState.personalBest
+
+        -- 50% milestone
+        if percent >= 0.5 and percent < 0.55 and not GameState.milestone50Shown then
+            GameState.milestone50Shown = true
+            triggerVisualAlert('normal', '50% TO PB', 2.0)
+            UIState.currentState = 'normal'
+            UIState.glowIntensity = 0.8
+            UIState.glowTimer = 0
+        end
+
+        -- 75% milestone
+        if percent >= 0.75 and percent < 0.8 and not GameState.milestone75Shown then
+            GameState.milestone75Shown = true
+            triggerVisualAlert('normal', '75% TO PB', 2.0)
+            UIState.currentState = 'normal'
+            UIState.glowIntensity = 0.8
+            UIState.glowTimer = 0
+        end
+    end
+end
+
+-- Reset milestone flags for new runs
+local function resetMilestoneFlags()
+    GameState.milestone50Shown = false
+    GameState.milestone75Shown = false
+end
+
+-- ============================================================================
 -- UI RENDERING SYSTEM
 -- ============================================================================
 
@@ -1292,88 +1809,57 @@ function updateRealTimeCombos(dt, player)
         GameState.stats.bestCombo = GameState.comboMultiplier
     end
 end
+end
 
--- Render the new Current Score UI with separate combo counters
+-- Enhanced Current Score UI with HTML-inspired design
 function renderCurrentScoreUI(player, speedRatio)
-    local colorDark = rgbm(0.05, 0.05, 0.1, 0.95)
-    local colorLight = rgbm(0.9, 0.9, 0.9, 1.0)
-    local colorAccent = hsv2rgb(speedRatio * 0.33, 0.8, 1.0)
-    local colorCombo = hsv2rgb(GameState.comboColorHue / 360, 0.7, 1.0)
+    -- Update visual state animations
+    updateVisualState(ac.getDeltaT())
 
-    -- Handle drag-and-drop for main UI
-    local windowSize = vec2(450, 350)
-    GameState.uiPosition = handleUIDragAndDrop('currentScore', GameState.uiPosition, windowSize)
+    -- Check for milestone alerts
+    checkMilestoneAlerts()
 
-    ui.beginTransparentWindow('currentScore', GameState.uiPosition, windowSize, true)
-    ui.beginOutline()
+    -- Handle drag and drop functionality
+    local mousePos = ui.mousePos()
+    local isMouseDown = ui.isMouseDown(0)
 
-    -- Modern header with gradient effect
-    ui.pushFont(ui.Font.Title)
-    ui.textColored('CURRENT SCORE', colorLight)
-    ui.popFont()
+    -- Define UI bounds for drag detection
+    local uiWidth = 950
+    local uiHeight = 166 -- 70 (stat boxes) + 16 (gap) + 80 (score box)
+    local uiBounds = {
+        x1 = GameState.uiPosition.x,
+        y1 = GameState.uiPosition.y,
+        x2 = GameState.uiPosition.x + uiWidth,
+        y2 = GameState.uiPosition.y + uiHeight
+    }
 
-    ui.dummy(vec2(0, 5))
+    -- Check if mouse is over UI
+    local mouseOverUI = mousePos.x >= uiBounds.x1 and mousePos.x <= uiBounds.x2 and
+                       mousePos.y >= uiBounds.y1 and mousePos.y <= uiBounds.y2
 
-    -- Large score display
-    ui.pushFont(ui.Font.Huge)
-    local currentScore = GameState.currentScore or 0
-    ui.textColored(string.format('%d', currentScore), colorAccent)
-    ui.sameLine()
-    ui.pushFont(ui.Font.Main)
-    ui.textColored('pts', colorLight)
-    ui.popFont()
-    ui.popFont()
-
-    ui.dummy(vec2(0, 15))
-
-    -- Combo counters section
-    ui.pushFont(ui.Font.Main)
-    ui.textColored('COMBO MULTIPLIERS', colorLight)
-    ui.popFont()
-
-    ui.dummy(vec2(0, 5))
-
-    -- Four separate combo displays in a 2x2 grid
-    local comboStartPos = ui.getCursor()
-
-    -- Speed Combo (top-left)
-    ui.setCursor(comboStartPos)
-    renderComboCounter('SPEED', GameState.combos.speed, rgbm(1, 0.3, 0.3, 1), vec2(200, 60))
-
-    -- Proximity Combo (top-right)
-    ui.setCursor(comboStartPos + vec2(220, 0))
-    renderComboCounter('PROXIMITY', GameState.combos.proximity, rgbm(0.3, 1, 0.3, 1), vec2(200, 60))
-
-    -- Lane Diversity Combo (bottom-left)
-    ui.setCursor(comboStartPos + vec2(0, 70))
-    renderComboCounter('LANE DIV', GameState.combos.laneDiversity, rgbm(0.3, 0.3, 1, 1), vec2(200, 60))
-
-    -- Overtake Combo (bottom-right)
-    ui.setCursor(comboStartPos + vec2(220, 70))
-    renderComboCounter('OVERTAKE', GameState.combos.overtake, rgbm(1, 1, 0.3, 1), vec2(200, 60))
-
-    -- Speed meter at bottom
-    ui.setCursor(comboStartPos + vec2(0, 150))
-    drawSpeedMeter(ui.getCursor(), speedRatio, colorAccent, colorDark)
-
-    -- Lives display
-    ui.dummy(vec2(0, 30))
-    ui.pushFont(ui.Font.Main)
-    ui.text('Lives: ')
-    ui.sameLine()
-    local lives = GameState.lives or CONFIG.LIVES_COUNT
-    for i = 1, CONFIG.LIVES_COUNT do
-        if i <= lives then
-            ui.textColored('♥', rgbm(1, 0.2, 0.2, 1))
-        else
-            ui.textColored('♡', rgbm(0.5, 0.5, 0.5, 1))
-        end
-        if i < CONFIG.LIVES_COUNT then ui.sameLine() end
+    -- Handle drag mode
+    if mouseOverUI and isMouseDown and not GameState.uiMoveMode then
+        GameState.uiMoveMode = true
+        GameState.dragOffset = vec2(mousePos.x - GameState.uiPosition.x, mousePos.y - GameState.uiPosition.y)
+    elseif GameState.uiMoveMode and not isMouseDown then
+        GameState.uiMoveMode = false
+    elseif GameState.uiMoveMode and isMouseDown then
+        GameState.uiPosition = vec2(mousePos.x - GameState.dragOffset.x, mousePos.y - GameState.dragOffset.y)
     end
-    ui.popFont()
 
-    ui.endOutline(rgbm(0, 0, 0, 0.7))
-    ui.endTransparentWindow()
+    -- Render the enhanced UI
+    ui.pushClipRect(vec2(0, 0), ui.windowSize(), false)
+
+    -- Render stat boxes row
+    renderStatBoxesRow(GameState.uiPosition.x + 6, GameState.uiPosition.y)
+
+    -- Render main score display
+    renderMainScoreBox(GameState.uiPosition.x + 6, GameState.uiPosition.y + 86)
+
+    -- Render particles on top
+    renderParticles()
+
+    ui.popClipRect()
 end
 
 -- Render individual combo counter
