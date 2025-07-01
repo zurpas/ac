@@ -435,8 +435,10 @@ local function endRun()
                 addNotification(string.format('NEW PB: %d pts (+%d)', GameState.personalBest, improvement), 'record', 5.0)
             end
 
-            -- Trigger new PB visual alert
-            triggerVisualAlert('new_pb', string.format('NEW PB: %d PTS', GameState.personalBest), 4.0)
+            -- Trigger HTML-style new PB animations
+            triggerFadeAlert(string.format('NEW PB: %d PTS', GameState.personalBest), 4.0)
+            triggerBorderChase('new-pb', 3.0)
+            triggerScorePop()
 
             playSound(SOUNDS.PERSONAL_BEST, 0.7)
             addPersonalBestOverlay(GameState.personalBest, improvement)
@@ -676,6 +678,14 @@ local function addScore(basePoints, player, isOvertake)
     GameState.currentScore = GameState.currentScore + points
     GameState.comboMultiplier = GameState.comboMultiplier + 0.1
 
+    -- Trigger HTML-style score pop animation
+    triggerScorePop()
+
+    -- Trigger roll animation for significant score changes
+    if points >= 50 then
+        triggerRoll()
+    end
+
     -- Live Personal Best alerts (don't update PB value until run ends)
     if GameState.runState == 'active' and GameState.currentScore > GameState.personalBest then
         local improvement = GameState.currentScore - GameState.personalBest
@@ -750,16 +760,20 @@ local function handleCollision(collisionType, collisionData)
 
             addNotification('SCORE RESET - LIVES RESTORED', 'error', 4.0)
 
-            -- Trigger crash visual alert
-            triggerVisualAlert('crash', 'GAME OVER!', 3.5)
+            -- Trigger HTML-style crash animations
+            triggerFadeAlert('GAME OVER!', 3.5)
+            triggerShake()
+            triggerBorderChase('collision', 2.0)
 
             ac.log('Full reset applied - lives restored')
         else
             local collisionMsg = string.format('COLLISION! -%d pts (%d/3 lives)', lostPoints, GameState.lives)
             addNotification(collisionMsg, 'warning', 3.0)
 
-            -- Trigger collision visual alert
-            triggerVisualAlert('collision', string.format('-%d PTS', lostPoints), 2.5)
+            -- Trigger HTML-style collision animations
+            triggerFadeAlert(string.format('-%d PTS', lostPoints), 2.5)
+            triggerShake()
+            triggerBorderChase('collision', 1.5)
         end
 
         playSound(SOUNDS.COLLISION, 0.6)
@@ -980,29 +994,50 @@ function updateCarTracking(dt, player)
                     state.maxPosDot = math.max(state.maxPosDot, posDot)
 
                     if posDot < -0.5 and state.maxPosDot > 0.5 and not state.overtaken then
-                        -- Enhanced overtake detection for dense traffic
+                        -- Enhanced overtake detection with strict duplicate prevention
                         local currentTime = GameState.timePassed
+                        local carId = string.format("car_%d", i)  -- Unique car identifier
 
-                        -- Check if this specific car was overtaken very recently (0.3s window)
-                        if not state.lastOvertakeTime or (currentTime - state.lastOvertakeTime) > 0.3 then
-                            -- Successful overtake of this specific car
-                            local points = addScore(10, player, true) -- Mark as overtake
-                            addNotification(string.format('+%d pts - Overtake!', points), 'success')
-                            playSound(SOUNDS.OVERTAKE)
-
-                            state.overtaken = true
-                            state.lastOvertakeTime = currentTime
-
-                            -- Near miss bonus
-                            if car.position:closerToThan(player.position, CONFIG.NEAR_MISS_DISTANCE) then
-                                local bonusPoints = addScore(5, player, false)
-                                addNotification(string.format('+%d pts - Near Miss!', bonusPoints), 'success')
-                                playSound(SOUNDS.NEAR_MISS)
-                                GameState.stats.totalNearMisses = GameState.stats.totalNearMisses + 1
+                        -- Check if this specific car was overtaken very recently (1.0s window for safety)
+                        if not state.lastOvertakeTime or (currentTime - state.lastOvertakeTime) > 1.0 then
+                            -- Double-check that we haven't already counted this overtake
+                            if not GameState.recentOvertakes then
+                                GameState.recentOvertakes = {}
                             end
 
-                            -- Check for consecutive overtake bonus
-                            checkConsecutiveOvertakes(currentTime, i)
+                            -- Clean old overtake records (older than 2 seconds)
+                            for carKey, overtakeTime in pairs(GameState.recentOvertakes) do
+                                if currentTime - overtakeTime > 2.0 then
+                                    GameState.recentOvertakes[carKey] = nil
+                                end
+                            end
+
+                            -- Only count if not recently overtaken
+                            if not GameState.recentOvertakes[carId] then
+                                -- Successful overtake of this specific car
+                                local points = addScore(10, player, true) -- Mark as overtake
+
+                                -- Record this overtake to prevent duplicates
+                                GameState.recentOvertakes[carId] = currentTime
+                                state.overtaken = true
+                                state.lastOvertakeTime = currentTime
+
+                                -- Near miss bonus (no notification - shown in main UI)
+                                if car.position:closerToThan(player.position, CONFIG.NEAR_MISS_DISTANCE) then
+                                    local bonusPoints = addScore(5, player, false)
+                                    GameState.stats.totalNearMisses = GameState.stats.totalNearMisses + 1
+                                end
+
+                                -- Check for consecutive overtake bonus
+                                checkConsecutiveOvertakes(currentTime, i)
+
+                                -- Play sound but no notification (score shown in main UI)
+                                playSound(SOUNDS.OVERTAKE)
+
+                                ac.log(string.format('Overtake counted for car %d at time %.2f', i, currentTime))
+                            else
+                                ac.log(string.format('Duplicate overtake prevented for car %d', i))
+                            end
                         end
                     end
                 end
@@ -1071,7 +1106,148 @@ end
 -- ANIMATION SYSTEM
 -- ============================================================================
 
+-- HTML-style animation triggers
+local function triggerScorePop()
+    UIState.scorePopActive = true
+    UIState.scorePopTimer = 0
+end
+
+local function triggerFadeAlert(message, duration)
+    UIState.fadeAlertActive = true
+    UIState.fadeAlertTimer = 0
+    UIState.fadeAlertDuration = duration or 2.5
+    UIState.alertMessage = message
+    UIState.fadeAlertOpacity = 0
+    UIState.fadeAlertScale = 0.8
+end
+
+local function triggerBorderChase(chaseType, duration)
+    UIState.borderChaseActive = true
+    UIState.borderChaseTimer = 0
+    UIState.borderChaseType = chaseType or 'standard'
+    UIState.borderChaseDuration = duration or 1.5
+    UIState.borderChaseOffset = 0
+end
+
+local function triggerShake()
+    UIState.shakeActive = true
+    UIState.shakeActiveTimer = 0
+    UIState.shakeOffsetX = 0
+end
+
+local function triggerRoll()
+    UIState.rollActive = true
+    UIState.rollTimer = 0
+    UIState.rollRotation = 0
+end
+
+-- Animation easing functions
+local function easeInOut(t)
+    return t < 0.5 and 2 * t * t or -1 + (4 - 2 * t) * t
+end
+
+local function easeOut(t)
+    return 1 - (1 - t) * (1 - t)
+end
+
+local function easeIn(t)
+    return t * t
+end
+
 function updateAnimations(dt)
+    -- Update HTML-style animations
+
+    -- Score pop animation (0.35s duration)
+    if UIState.scorePopActive then
+        UIState.scorePopTimer = UIState.scorePopTimer + dt
+        local progress = UIState.scorePopTimer / UIState.scorePopDuration
+
+        if progress <= 1.0 then
+            -- CSS: 0% scale(1), 50% scale(1.07), 100% scale(1)
+            if progress <= 0.5 then
+                UIState.popScale = lerp(1.0, 1.07, easeOut(progress * 2))
+            else
+                UIState.popScale = lerp(1.07, 1.0, easeIn((progress - 0.5) * 2))
+            end
+        else
+            UIState.scorePopActive = false
+            UIState.popScale = 1.0
+        end
+    end
+
+    -- Fade alert animation (2.5s duration)
+    if UIState.fadeAlertActive then
+        UIState.fadeAlertTimer = UIState.fadeAlertTimer + dt
+        local progress = UIState.fadeAlertTimer / UIState.fadeAlertDuration
+
+        if progress <= 1.0 then
+            -- CSS: 0% opacity(0) scale(0.8), 15% opacity(1) scale(1.05), 80% opacity(1), 100% opacity(0) scale(1)
+            if progress <= 0.15 then
+                local t = progress / 0.15
+                UIState.fadeAlertOpacity = lerp(0, 1, easeOut(t))
+                UIState.fadeAlertScale = lerp(0.8, 1.05, easeOut(t))
+            elseif progress <= 0.8 then
+                UIState.fadeAlertOpacity = 1.0
+                UIState.fadeAlertScale = lerp(1.05, 1.0, (progress - 0.15) / 0.65)
+            else
+                local t = (progress - 0.8) / 0.2
+                UIState.fadeAlertOpacity = lerp(1, 0, easeIn(t))
+                UIState.fadeAlertScale = 1.0
+            end
+        else
+            UIState.fadeAlertActive = false
+            UIState.fadeAlertOpacity = 1.0
+            UIState.fadeAlertScale = 1.0
+        end
+    end
+
+    -- Border chase animation (1.5s duration, infinite loop)
+    if UIState.borderChaseActive then
+        UIState.borderChaseTimer = UIState.borderChaseTimer + dt
+        local progress = (UIState.borderChaseTimer % UIState.borderChaseDuration) / UIState.borderChaseDuration
+
+        -- CSS: 0% background-position(-200% 0), 100% background-position(200% 0)
+        UIState.borderChaseOffset = lerp(-2.0, 2.0, easeInOut(progress))
+    end
+
+    -- Shake animation (0.4s duration)
+    if UIState.shakeActive then
+        UIState.shakeActiveTimer = UIState.shakeActiveTimer + dt
+        local progress = UIState.shakeActiveTimer / UIState.shakeDuration
+
+        if progress <= 1.0 then
+            -- CSS: 0% translateX(0), 25% translateX(-5px), 75% translateX(5px), 100% translateX(0)
+            if progress <= 0.25 then
+                UIState.shakeOffsetX = lerp(0, -5, progress * 4)
+            elseif progress <= 0.75 then
+                UIState.shakeOffsetX = lerp(-5, 5, (progress - 0.25) * 2)
+            else
+                UIState.shakeOffsetX = lerp(5, 0, (progress - 0.75) * 4)
+            end
+        else
+            UIState.shakeActive = false
+            UIState.shakeOffsetX = 0
+        end
+    end
+
+    -- Roll animation (0.6s duration)
+    if UIState.rollActive then
+        UIState.rollTimer = UIState.rollTimer + dt
+        local progress = UIState.rollTimer / UIState.rollDuration
+
+        if progress <= 1.0 then
+            -- CSS: 0% rotateX(0deg), 50% rotateX(90deg), 100% rotateX(0deg)
+            if progress <= 0.5 then
+                UIState.rollRotation = lerp(0, 90, easeInOut(progress * 2))
+            else
+                UIState.rollRotation = lerp(90, 0, easeInOut((progress - 0.5) * 2))
+            end
+        else
+            UIState.rollActive = false
+            UIState.rollRotation = 0
+        end
+    end
+
     -- Update notifications
     for i = #GameState.notifications, 1, -1 do
         local notif = GameState.notifications[i]
@@ -1170,6 +1346,33 @@ local UIState = {
     popScale = 1.0,
     glowIntensity = 0,
     borderPhase = 0,
+
+    -- HTML-style animation states
+    scorePopActive = false,
+    scorePopTimer = 0,
+    scorePopDuration = 0.35,
+
+    fadeAlertActive = false,
+    fadeAlertTimer = 0,
+    fadeAlertDuration = 2.5,
+    fadeAlertOpacity = 1.0,
+    fadeAlertScale = 1.0,
+
+    borderChaseActive = false,
+    borderChaseTimer = 0,
+    borderChaseDuration = 1.5,
+    borderChaseOffset = 0,
+    borderChaseType = 'standard', -- 'standard', 'collision', 'new-pb'
+
+    shakeActive = false,
+    shakeActiveTimer = 0,
+    shakeDuration = 0.4,
+    shakeOffsetX = 0,
+
+    rollActive = false,
+    rollTimer = 0,
+    rollDuration = 0.6,
+    rollRotation = 0,
 
     -- Particle system
     particles = {},
@@ -1310,6 +1513,17 @@ local function drawSkewedText(x, y, width, height, text, color, fontSize)
     ui.popFont()
 end
 
+-- Get color based on UI state
+local function getStateColor(state)
+    if state == 'collision' or state == 'crash' then
+        return UI_COLORS.GLOW_YELLOW
+    elseif state == 'new_pb' then
+        return UI_COLORS.GLOW_CYAN
+    else
+        return UI_COLORS.GLOW_PURPLE
+    end
+end
+
 -- Animate border chase effect (like CSS animation)
 local function getBorderChaseColor(baseColor, phase, intensity)
     -- Create moving highlight effect
@@ -1334,20 +1548,32 @@ local function renderStatBox(x, y, width, height, topText, bottomText, isTotal)
     -- Draw the skewed box
     drawSkewedRect(x + shakeX, y, width, height, fillColor, borderColor, 2)
 
-    -- Draw text in two lines
-    local centerX = x + width * 0.5 + height * 0.27 * 0.5 + shakeX
+    -- Draw text in two lines with proper centering
+    local visualCenterX = x + width * 0.5 + shakeX  -- Remove skew offset from center calculation
     local fontSize = isTotal and 20 or 16
 
     ui.pushFont(ui.Font.Main)
 
-    -- Top text (multiplier value)
-    local topEstimatedWidth = string.len(topText) * 12 * 0.6
-    ui.setCursor(vec2(centerX - topEstimatedWidth * 0.5, y + height * 0.25))
+    -- Top text (multiplier value) - use larger font for total box
+    if isTotal then
+        ui.popFont()
+        ui.pushFont(ui.Font.Title)
+    end
+
+    local topCharWidth = isTotal and 12 or 10
+    local topEstimatedWidth = string.len(topText) * topCharWidth
+    ui.setCursor(vec2(visualCenterX - topEstimatedWidth * 0.5, y + height * 0.25))
     ui.textColored(topText, textColor)
 
+    if isTotal then
+        ui.popFont()
+        ui.pushFont(ui.Font.Main)
+    end
+
     -- Bottom text (label)
-    local bottomEstimatedWidth = string.len(bottomText) * 10 * 0.6
-    ui.setCursor(vec2(centerX - bottomEstimatedWidth * 0.5, y + height * 0.65))
+    local bottomCharWidth = 8
+    local bottomEstimatedWidth = string.len(bottomText) * bottomCharWidth
+    ui.setCursor(vec2(visualCenterX - bottomEstimatedWidth * 0.5, y + height * 0.65))
     ui.textColored(bottomText, textColor)
 
     ui.popFont()
@@ -1423,31 +1649,72 @@ local function renderMainScoreBox(baseX, baseY)
         glowIntensity = UIState.glowIntensity
     end
 
-    -- Draw score box with glow effect
+    -- Draw score box with glow effect and HTML-style border chase
     if glowColor and glowIntensity > 0 then
-        -- Animate border chase effect
-        UIState.borderPhase = UIState.borderPhase + 0.02
-        if UIState.borderPhase > 1 then UIState.borderPhase = 0 end
-
-        local chaseColor = getBorderChaseColor(glowColor, UIState.borderPhase, glowIntensity)
-        drawSkewedRectWithGlow(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, chaseColor, glowIntensity)
+        -- Use HTML-style border chase animation if active
+        if UIState.borderChaseActive then
+            local chaseColor = getBorderChaseColor(glowColor, UIState.borderChaseOffset, glowIntensity)
+            drawSkewedRectWithGlow(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, chaseColor, glowIntensity)
+        else
+            -- Fallback to old animation for compatibility
+            UIState.borderPhase = UIState.borderPhase + 0.02
+            if UIState.borderPhase > 1 then UIState.borderPhase = 0 end
+            local chaseColor = getBorderChaseColor(glowColor, UIState.borderPhase, glowIntensity)
+            drawSkewedRectWithGlow(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, chaseColor, glowIntensity)
+        end
     else
         drawSkewedRect(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, UI_COLORS.BORDER_DARK, 2)
     end
 
-    -- Draw score text
+    -- Draw score text with proper centering for skewed box
     local scoreText = UIState.showingAlert and UIState.alertMessage or
                      string.format('%s PTS', formatNumber(GameState.currentScore))
 
-    local centerX = baseX + scoreWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
-    local centerY = baseY + scoreHeight * 0.5
+    -- Calculate proper center position for skewed parallelogram
+    -- The skew offset affects the visual center, so we need to adjust
+    local skewOffset = scoreHeight * 0.27
+    local visualCenterX = baseX + scoreWidth * 0.5 + shakeX  -- Don't add skew offset to center calculation
+    local visualCenterY = baseY + scoreHeight * 0.5
 
     ui.pushFont(ui.Font.Huge)  -- Use Huge font for large score text (28px equivalent)
 
-    local estimatedWidth = string.len(scoreText) * 28 * 0.6
+    -- More accurate text size estimation for better centering
+    local charWidth = 16.8  -- More accurate character width for Huge font
+    local estimatedWidth = string.len(scoreText) * charWidth
     local estimatedHeight = 28
-    ui.setCursor(vec2(centerX - estimatedWidth * 0.5, centerY - estimatedHeight * 0.5))
-    ui.textColored(scoreText, textColor)
+
+    -- Apply HTML-style animations
+    local currentScale = UIState.popScale or 1.0
+    local shakeX = UIState.shakeActive and UIState.shakeOffsetX or 0
+
+    -- Apply scale animation if active
+    if currentScale ~= 1.0 then
+        ui.pushStyleVar(ui.StyleVar.ScaleAllSizes, currentScale)
+    end
+
+    -- Apply shake offset
+    local finalX = visualCenterX - estimatedWidth * 0.5 + shakeX
+    local finalY = visualCenterY - estimatedHeight * 0.5
+
+    -- Handle fade alert mode
+    if UIState.fadeAlertActive then
+        local alertColor = rgbm(textColor.r, textColor.g, textColor.b, UIState.fadeAlertOpacity)
+        if UIState.fadeAlertScale ~= 1.0 then
+            ui.pushStyleVar(ui.StyleVar.ScaleAllSizes, UIState.fadeAlertScale)
+        end
+        ui.setCursor(vec2(finalX, finalY))
+        ui.textColored(UIState.alertMessage, alertColor)
+        if UIState.fadeAlertScale ~= 1.0 then
+            ui.popStyleVar()
+        end
+    else
+        ui.setCursor(vec2(finalX, finalY))
+        ui.textColored(scoreText, textColor)
+    end
+
+    if currentScale ~= 1.0 then
+        ui.popStyleVar()
+    end
 
     ui.popFont()
 
@@ -1455,19 +1722,22 @@ local function renderMainScoreBox(baseX, baseY)
     local timerX = baseX + scoreWidth + gap
     drawSkewedRect(timerX + shakeX, baseY, timerWidth, scoreHeight, UI_COLORS.BLACK, UI_COLORS.BORDER_DARK, 2)
 
-    -- Timer text
+    -- Timer text with proper centering
     local minutes = math.floor(GameState.timePassed / 60)
     local seconds = math.floor(GameState.timePassed % 60)
     local timerText = string.format('%02d:%02d', minutes, seconds)
 
-    local timerCenterX = timerX + timerWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
-    local timerCenterY = baseY + scoreHeight * 0.5
+    -- Calculate proper center position for timer box (also skewed)
+    local timerVisualCenterX = timerX + timerWidth * 0.5 + shakeX
+    local timerVisualCenterY = baseY + scoreHeight * 0.5
 
     ui.pushFont(ui.Font.Title)  -- Use Title font for timer text (18px equivalent)
 
-    local estimatedWidth = string.len(timerText) * 18 * 0.6
-    local estimatedHeight = 18
-    ui.setCursor(vec2(timerCenterX - estimatedWidth * 0.5, timerCenterY - estimatedHeight * 0.5))
+    -- More accurate text size estimation for Title font
+    local timerCharWidth = 10.8  -- More accurate character width for Title font
+    local timerEstimatedWidth = string.len(timerText) * timerCharWidth
+    local timerEstimatedHeight = 18
+    ui.setCursor(vec2(timerVisualCenterX - timerEstimatedWidth * 0.5, timerVisualCenterY - timerEstimatedHeight * 0.5))
     ui.textColored(timerText, UI_COLORS.WHITE)
 
     ui.popFont()
@@ -1781,11 +2051,14 @@ function checkConsecutiveOvertakes(currentTime, carIndex)
     -- Apply consecutive overtake bonuses based on unique cars overtaken
     if recentOvertakes >= 5 then
         GameState.combos.overtake = math.min(3.0, GameState.combos.overtake + 0.5)
-        addNotification('OVERTAKE FRENZY! +Combo', 'success', 2.0)
+        -- Show visual alert instead of notification for major achievements
+        triggerVisualAlert('combo', 'OVERTAKE FRENZY!', 2.0)
+        playSound(SOUNDS.NEAR_MISS, 0.8)
         ac.log(string.format('Overtake frenzy: %d unique cars in 10s', recentOvertakes))
     elseif recentOvertakes >= 3 then
         GameState.combos.overtake = math.min(2.5, GameState.combos.overtake + 0.3)
-        addNotification('Overtake Streak!', 'success', 1.5)
+        -- Subtle visual feedback for streaks
+        triggerVisualAlert('combo', 'STREAK!', 1.5)
         ac.log(string.format('Overtake streak: %d unique cars in 10s', recentOvertakes))
     end
 
@@ -1798,7 +2071,8 @@ function checkConsecutiveOvertakes(currentTime, carIndex)
     end
 
     if simultaneousOvertakes >= 2 then
-        addNotification('Multi-Overtake!', 'success', 1.5)
+        -- Visual alert for multi-overtakes
+        triggerVisualAlert('combo', 'MULTI!', 1.5)
         GameState.combos.overtake = math.min(2.8, GameState.combos.overtake + 0.2)
     end
 end
@@ -2326,172 +2600,11 @@ local function renderDebugInfo()
     ui.endTransparentWindow()
 end
 
--- Enhanced update functions with performance optimizations
-function updateCarTrackingOptimized(dt, player)
-    local sim = ac.getSim()
+-- REMOVED: Duplicate optimized car tracking function that was causing multiple overtake counts
+-- Using the main updateCarTracking function instead for consistency
 
-    -- Ensure we have enough car state slots
-    while sim.carsCount > #GameState.carsState do
-        GameState.carsState[#GameState.carsState + 1] = initializeCarState(#GameState.carsState + 1)
-    end
-
-    -- Check for collisions first
-    if player.collidedWith > 0 then
-        GameState.stats.totalCollisions = GameState.stats.totalCollisions + 1
-        handleCollision()
-        return
-    end
-
-    -- Track other cars for overtaking with performance optimization
-    for i = 2, sim.carsCount do
-        local car = ac.getCarState(i)
-        if not car then goto continue end
-
-        local distance = car.position:distance(player.position)
-        local state = GameState.carsState[i]
-
-        -- Performance optimization: skip distant cars most of the time
-        if not shouldUpdateCar(i, distance) then
-            goto continue
-        end
-
-        if distance < CONFIG.PROXIMITY_BONUS_DISTANCE then
-            local drivingAlong = math.dot(car.look, player.look) > 0.2
-
-            if drivingAlong then
-                state.drivingAlong = true
-
-                -- Enhanced overtaking detection
-                if not state.overtaken and not state.collided then
-                    local posDir = (car.position - player.position):normalize()
-                    local posDot = math.dot(posDir, car.look)
-                    state.maxPosDot = math.max(state.maxPosDot, posDot)
-
-                    if posDot < -0.5 and state.maxPosDot > 0.5 then
-                        -- Successful overtake
-                        local points = addScore(10, player)
-                        GameState.stats.totalOvertakes = GameState.stats.totalOvertakes + 1
-
-                        addNotification(string.format('+%d pts - Overtake! (%d total)', points, GameState.stats.totalOvertakes), 'success')
-                        playSound(SOUNDS.OVERTAKE)
-
-                        state.overtaken = true
-
-                        -- Near miss bonus
-                        if distance < CONFIG.NEAR_MISS_DISTANCE then
-                            local bonusPoints = addScore(5, player)
-                            GameState.stats.totalNearMisses = GameState.stats.totalNearMisses + 1
-                            addNotification(string.format('+%d pts - Near Miss!', bonusPoints), 'success')
-                            playSound(SOUNDS.NEAR_MISS)
-                        end
-
-                        -- Check combo milestones
-                        checkComboMilestones()
-                    end
-                end
-            else
-                state.drivingAlong = false
-            end
-        else
-            -- Reset state when car is far away
-            state.maxPosDot = -1
-            state.overtaken = false
-            state.collided = false
-            state.drivingAlong = true
-            state.nearMiss = false
-        end
-
-        ::continue::
-    end
-
-    updateStatistics()
-end
-
--- Replace the original updateCarTracking function with the optimized version
-updateCarTracking = updateCarTrackingOptimized
-
--- Remove duplicate collision detection from the original function
-local function updateCarTrackingFixed(dt, player)
-    local sim = ac.getSim()
-
-    -- Ensure we have enough car state slots
-    while sim.carsCount > #GameState.carsState do
-        GameState.carsState[#GameState.carsState + 1] = {
-            overtaken = false,
-            collided = false,
-            drivingAlong = true,
-            nearMiss = false,
-            maxPosDot = -1
-        }
-    end
-
-    -- Single collision check here - no duplicates
-    if player.collidedWith > 0 and not GameState.collisionProcessed then
-        GameState.collisionProcessed = true
-        GameState.stats.totalCollisions = GameState.stats.totalCollisions + 1
-        handleCollision()
-        return
-    elseif player.collidedWith == 0 then
-        GameState.collisionProcessed = false
-    end
-
-    -- Track other cars for overtaking
-    for i = 2, sim.carsCount do
-        local car = ac.getCarState(i)
-        local state = GameState.carsState[i]
-
-        if car and car.position:closerToThan(player.position, CONFIG.PROXIMITY_BONUS_DISTANCE) then
-            local drivingAlong = math.dot(car.look, player.look) > 0.2
-
-            if drivingAlong then
-                state.drivingAlong = true
-
-                -- Check for overtaking
-                if not state.overtaken and not state.collided then
-                    local posDir = (car.position - player.position):normalize()
-                    local posDot = math.dot(posDir, car.look)
-                    state.maxPosDot = math.max(state.maxPosDot, posDot)
-
-                    if posDot < -0.5 and state.maxPosDot > 0.5 then
-                        -- Successful overtake
-                        local points = addScore(10, player)
-                        GameState.stats.totalOvertakes = GameState.stats.totalOvertakes + 1
-
-                        addNotification(string.format('+%d pts - Overtake! (%d total)', points, GameState.stats.totalOvertakes), 'success')
-                        playSound(SOUNDS.OVERTAKE)
-
-                        state.overtaken = true
-
-                        -- Near miss bonus
-                        if car.position:closerToThan(player.position, CONFIG.NEAR_MISS_DISTANCE) then
-                            local bonusPoints = addScore(5, player)
-                            GameState.stats.totalNearMisses = GameState.stats.totalNearMisses + 1
-                            addNotification(string.format('+%d pts - Near Miss!', bonusPoints), 'success')
-                            playSound(SOUNDS.NEAR_MISS)
-                        end
-
-                        -- Check combo milestones
-                        checkComboMilestones()
-                    end
-                end
-            else
-                state.drivingAlong = false
-            end
-        else
-            -- Reset state when car is far away
-            state.maxPosDot = -1
-            state.overtaken = false
-            state.collided = false
-            state.drivingAlong = true
-            state.nearMiss = false
-        end
-    end
-
-    updateStatistics()
-end
-
--- Use the fixed version
-updateCarTracking = updateCarTrackingFixed
+-- REMOVED: Duplicate car tracking function that was causing multiple overtake counts
+-- The main updateCarTracking function (lines 940-1021) is the authoritative version
 
 -- ============================================================================
 -- COMPREHENSIVE SETUP DOCUMENTATION
