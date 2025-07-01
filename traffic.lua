@@ -83,7 +83,9 @@ local GameState = {
     lanesDriven = {},
 
     -- Timing state
-    timePassed = 0,
+    timePassed = 0,          -- Global session time (for internal use)
+    runTimer = 0,            -- Run-specific timer (displayed to user)
+    runTimerActive = false,  -- Whether run timer is counting
     lastSpeedWarning = 0,
     dangerousSlowTimer = 0,
     
@@ -106,7 +108,6 @@ local GameState = {
     
     -- Animation state
     notifications = {},
-    particles = {},
     overlayAnimations = {},
     comboColorHue = 0,
     lastCollisionTime = 0,
@@ -407,8 +408,12 @@ local function startRun()
     GameState.runStartScore = GameState.currentScore
     GameState.pendingPBUpdate = false
 
+    -- Start the run timer
+    GameState.runTimer = 0
+    GameState.runTimerActive = true
+
     addNotification('Run Started!', 'info', 2.0)
-    ac.log('Scoring run started')
+    ac.log('Scoring run started - Timer started at 00:00')
 end
 
 -- End the current scoring run
@@ -417,6 +422,9 @@ local function endRun()
 
     GameState.runState = 'ended'
     GameState.runEndTime = GameState.timePassed
+
+    -- Stop the run timer
+    GameState.runTimerActive = false
 
     -- Check for Personal Best update
     if GameState.currentScore > GameState.personalBest then
@@ -435,8 +443,7 @@ local function endRun()
                 addNotification(string.format('NEW PB: %d pts (+%d)', GameState.personalBest, improvement), 'record', 5.0)
             end
 
-            -- Trigger new PB visual alert
-            triggerVisualAlert('new_pb', string.format('NEW PB: %d PTS', GameState.personalBest), 4.0)
+            -- Visual alerts removed for cleaner UI
 
             playSound(SOUNDS.PERSONAL_BEST, 0.7)
             addPersonalBestOverlay(GameState.personalBest, improvement)
@@ -465,7 +472,12 @@ local function resetForNewRun()
     GameState.overtakeHistory = {}
     GameState.carsState = {}
 
+    -- Reset run timer
+    GameState.runTimer = 0
+    GameState.runTimerActive = false
+
     addNotification('Ready for new run!', 'success', 2.0)
+    ac.log('Reset for new scoring run - Timer reset to 00:00')
 end
 
 -- Detect run start conditions
@@ -524,20 +536,7 @@ local function addNotification(text, type, duration)
         scale = 0.5
     }
     
-    -- Create particles for special notifications
-    if type == 'success' or type == 'record' then
-        for i = 1, 30 do
-            local angle = math.random() * math.pi * 2
-            local speed = 0.5 + math.random() * 1.5
-            table.insert(GameState.particles, {
-                pos = vec2(GameState.uiPosition.x + 100, GameState.uiPosition.y + 100),
-                velocity = vec2(math.cos(angle) * speed, math.sin(angle) * speed),
-                color = hsv2rgb(math.random(), 0.8, 1),
-                life = 1.0 + math.random(),
-                maxLife = 1.0 + math.random()
-            })
-        end
-    end
+    -- Particle effects removed for cleaner UI
 end
 
 -- ============================================================================
@@ -676,35 +675,7 @@ local function addScore(basePoints, player, isOvertake)
     GameState.currentScore = GameState.currentScore + points
     GameState.comboMultiplier = GameState.comboMultiplier + 0.1
 
-    -- Live Personal Best alerts (don't update PB value until run ends)
-    if GameState.runState == 'active' and GameState.currentScore > GameState.personalBest then
-        local improvement = GameState.currentScore - GameState.personalBest
-        local improvementPercent = (improvement / math.max(GameState.personalBest, 1)) * 100
-
-        -- Show live alerts for significant improvements
-        local shouldAlert = false
-        if GameState.personalBest == 0 and GameState.currentScore >= 50 then
-            -- First meaningful score
-            shouldAlert = true
-        elseif GameState.personalBest > 0 and (improvementPercent >= 10 or improvement >= 100) then
-            -- 10% improvement or 100+ point improvement
-            shouldAlert = true
-        elseif GameState.currentScore >= GameState.personalBest + 500 then
-            -- Always alert for 500+ point improvements
-            shouldAlert = true
-        end
-
-        -- Show live alert but don't update PB yet
-        if shouldAlert and not GameState.pendingPBUpdate then
-            GameState.pendingPBUpdate = true
-            if GameState.personalBest <= 100 then
-                addNotification(string.format('Beating PB: %d pts!', GameState.currentScore), 'success', 3.0)
-            else
-                addNotification(string.format('BEATING PB: %d pts (+%d)', GameState.currentScore, improvement), 'success', 3.0)
-            end
-            playSound(SOUNDS.NEAR_MISS, 0.5) -- Softer sound for live alerts
-        end
-    end
+    -- Live PB alerts removed to prevent spam - only celebrate final PB at run end
     
     return points
 end
@@ -748,18 +719,21 @@ local function handleCollision(collisionType, collisionData)
             GameState.combos = {speed = 1.0, proximity = 1.0, laneDiversity = 1.0, overtake = 1.0}
             GameState.lanesDriven = {}
 
+            -- Reset run timer when score resets to zero
+            GameState.runTimer = 0
+            GameState.runTimerActive = false
+            GameState.runState = 'not_started'
+
             addNotification('SCORE RESET - LIVES RESTORED', 'error', 4.0)
 
-            -- Trigger crash visual alert
-            triggerVisualAlert('crash', 'GAME OVER!', 3.5)
+            -- Visual alerts removed for cleaner UI
 
             ac.log('Full reset applied - lives restored')
         else
             local collisionMsg = string.format('COLLISION! -%d pts (%d/3 lives)', lostPoints, GameState.lives)
             addNotification(collisionMsg, 'warning', 3.0)
 
-            -- Trigger collision visual alert
-            triggerVisualAlert('collision', string.format('-%d PTS', lostPoints), 2.5)
+            -- Visual alerts removed for cleaner UI
         end
 
         playSound(SOUNDS.COLLISION, 0.6)
@@ -891,7 +865,12 @@ function script.update(dt)
     end
     
     GameState.timePassed = GameState.timePassed + dt
-    
+
+    -- Update run timer only when active
+    if GameState.runTimerActive then
+        GameState.runTimer = GameState.runTimer + dt
+    end
+
     local player = ac.getCarState(1)
     if not player or player.engineLifeLeft < 1 then
         return
@@ -985,9 +964,16 @@ function updateCarTracking(dt, player)
 
                         -- Check if this specific car was overtaken very recently (0.3s window)
                         if not state.lastOvertakeTime or (currentTime - state.lastOvertakeTime) > 0.3 then
+                            -- Start run on first overtake
+                            if GameState.runState == 'not_started' then
+                                startRun()
+                            end
+
                             -- Successful overtake of this specific car
                             local points = addScore(10, player, true) -- Mark as overtake
-                            addNotification(string.format('+%d pts - Overtake!', points), 'success')
+                            GameState.stats.totalOvertakes = GameState.stats.totalOvertakes + 1
+
+                            -- Removed excessive overtake notifications for cleaner UI
                             playSound(SOUNDS.OVERTAKE)
 
                             state.overtaken = true
@@ -1039,6 +1025,11 @@ function updateScoring(dt, player)
                 GameState.currentScore = 0
                 GameState.comboMultiplier = 1.0
                 GameState.lanesDriven = {}
+
+                -- Reset run timer when score resets to zero
+                GameState.runTimer = 0
+                GameState.runTimerActive = false
+                GameState.runState = 'not_started'
             end
             GameState.dangerousSlowTimer = 0
         else
@@ -1099,21 +1090,7 @@ function updateAnimations(dt)
         end
     end
 
-    -- Update particles
-    for i = #GameState.particles, 1, -1 do
-        local particle = GameState.particles[i]
-        particle.pos = particle.pos + particle.velocity * dt * 60
-        particle.velocity.y = particle.velocity.y + dt * 100 -- Gravity
-        particle.life = particle.life - dt
-
-        -- Fade out
-        particle.color.mult = particle.life / particle.maxLife
-
-        -- Remove dead particles
-        if particle.life <= 0 then
-            table.remove(GameState.particles, i)
-        end
-    end
+    -- Particle system removed for cleaner UI
 end
 
 -- ============================================================================
@@ -1155,24 +1132,15 @@ local UI_COLORS = {
 local UIState = {
     -- Animation timers
     glowTimer = 0,
-    particleTimer = 0,
     shakeTimer = 0,
     popTimer = 0,
 
     -- Visual states
-    currentState = 'normal', -- 'normal', 'collision', 'crash', 'new_pb'
-    showingAlert = false,
-    alertTimer = 0,
-    alertMessage = '',
+    currentState = 'normal',
 
     -- Animation properties
     shakeOffset = 0,
     popScale = 1.0,
-    glowIntensity = 0,
-    borderPhase = 0,
-
-    -- Particle system
-    particles = {},
 
     -- Score display
     lastDisplayedScore = 0,
@@ -1180,57 +1148,7 @@ local UIState = {
     scoreRollTimer = 0,
 }
 
--- Particle system for visual effects
-local function createParticle(x, y, color, type)
-    local particle = {
-        x = x + math.random(-20, 20),
-        y = y + math.random(-10, 10),
-        vx = math.random(-50, 50),
-        vy = math.random(-80, -20),
-        life = 0,
-        maxLife = type == 'new_pb' and 2.0 or (type == 'enhanced' and 1.6 or 1.4),
-        size = type == 'new_pb' and 14 or (type == 'enhanced' and 12 or 10),
-        color = color,
-        type = type
-    }
-    table.insert(UIState.particles, particle)
-end
-
--- Update particle system
-local function updateParticles(dt)
-    for i = #UIState.particles, 1, -1 do
-        local p = UIState.particles[i]
-        p.life = p.life + dt
-
-        -- Update position
-        p.x = p.x + p.vx * dt
-        p.y = p.y + p.vy * dt
-        p.vy = p.vy + 100 * dt -- Gravity
-
-        -- Remove expired particles
-        if p.life >= p.maxLife then
-            table.remove(UIState.particles, i)
-        end
-    end
-end
-
--- Render particles
-local function renderParticles()
-    for _, p in ipairs(UIState.particles) do
-        local alpha = 1 - (p.life / p.maxLife)
-        local size = p.size * (1 - p.life / p.maxLife * 0.7)
-
-        if alpha > 0 and size > 1 then
-            local color = rgbm(p.color.r, p.color.g, p.color.b, alpha)
-            ui.drawCircleFilled(vec2(p.x, p.y), size * 0.5, color, 12)
-
-            -- Add glow effect for special particles
-            if p.type == 'new_pb' then
-                ui.drawCircle(vec2(p.x, p.y), size * 0.7, UI_COLORS.GLOW_CYAN, 2, 12)
-            end
-        end
-    end
-end
+-- Particle system removed for cleaner UI
 
 -- ============================================================================
 -- SKEWED PARALLELOGRAM UI FUNCTIONS
@@ -1322,43 +1240,47 @@ end
 -- ENHANCED STAT BOXES RENDERING
 -- ============================================================================
 
--- Render individual stat box with skewed design
+-- Render individual stat box with modern rounded design (HTML-inspired)
 local function renderStatBox(x, y, width, height, topText, bottomText, isTotal)
-    local fillColor = isTotal and UI_COLORS.ORANGE_ACCENT or UI_COLORS.DARK_BG
-    local borderColor = UI_COLORS.BORDER_DARK
+    -- Updated colors to match HTML design
+    local fillColor = isTotal and rgbm(0.58, 0.32, 0.93, 0.2) or rgbm(1, 1, 1, 0.06)  -- Purple gradient for total, glass for others
+    local borderColor = isTotal and rgbm(0.58, 0.32, 0.93, 0.3) or rgbm(1, 1, 1, 0.1)
     local textColor = UI_COLORS.WHITE
 
     -- Add shake effect if active
     local shakeX = UIState.shakeTimer > 0 and UIState.shakeOffset or 0
 
-    -- Draw the skewed box
-    drawSkewedRect(x + shakeX, y, width, height, fillColor, borderColor, 2)
+    -- Draw rounded rectangle (no skew for better text alignment)
+    ui.drawRectFilled(vec2(x + shakeX, y), vec2(x + width + shakeX, y + height), fillColor, 12)
+    ui.drawRect(vec2(x + shakeX, y), vec2(x + width + shakeX, y + height), borderColor, 12, 1)
 
-    -- Draw text in two lines
-    local centerX = x + width * 0.5 + height * 0.27 * 0.5 + shakeX
-    local fontSize = isTotal and 20 or 16
+    -- Properly centered text
+    local centerX = x + width * 0.5 + shakeX
 
+    -- Top text (multiplier value) - larger and colored
+    local valueColor = isTotal and rgbm(0.66, 0.33, 0.97, 1) or rgbm(0.23, 0.51, 0.96, 1)  -- Purple for total, blue for others
+    ui.pushFont(isTotal and ui.Font.Title or ui.Font.Main)
+    local topEstimatedWidth = string.len(topText) * (isTotal and 16 or 14) * 0.6
+    ui.setCursor(vec2(centerX - topEstimatedWidth * 0.5, y + height * 0.3))
+    ui.textColored(topText, valueColor)
+    ui.popFont()
+
+    -- Bottom text (label) - smaller and muted
     ui.pushFont(ui.Font.Main)
-
-    -- Top text (multiplier value)
-    local topEstimatedWidth = string.len(topText) * 12 * 0.6
-    ui.setCursor(vec2(centerX - topEstimatedWidth * 0.5, y + height * 0.25))
-    ui.textColored(topText, textColor)
-
-    -- Bottom text (label)
-    local bottomEstimatedWidth = string.len(bottomText) * 10 * 0.6
-    ui.setCursor(vec2(centerX - bottomEstimatedWidth * 0.5, y + height * 0.65))
-    ui.textColored(bottomText, textColor)
-
+    local labelColor = rgbm(1, 1, 1, 0.7)
+    local bottomEstimatedWidth = string.len(bottomText) * 9 * 0.6
+    ui.setCursor(vec2(centerX - bottomEstimatedWidth * 0.5, y + height * 0.7))
+    ui.textColored(bottomText, labelColor)
     ui.popFont()
 end
 
--- Render the complete stat boxes row
+-- Render the complete stat boxes row (redesigned - smaller and more compact)
 local function renderStatBoxesRow(baseX, baseY)
-    local boxWidth = 120
-    local boxHeight = 70
-    local totalBoxWidth = 130
-    local gap = 10
+    -- Scaled down dimensions based on HTML reference
+    local boxWidth = 90   -- Reduced from 120
+    local boxHeight = 55  -- Reduced from 70
+    local totalBoxWidth = 100  -- Reduced from 130
+    local gap = 8  -- Reduced from 10
 
     local currentX = baseX
 
@@ -1382,7 +1304,7 @@ local function renderStatBoxesRow(baseX, baseY)
     renderStatBox(currentX, baseY, boxWidth, boxHeight, overtakeText, 'Combo', false)
     currentX = currentX + boxWidth + gap
 
-    -- Total multiplier (orange box)
+    -- Total multiplier (special styling)
     local totalMultiplier = GameState.combos.speed * GameState.combos.proximity *
                            GameState.combos.laneDiversity * GameState.combos.overtake
     local totalText = string.format('%.1fX', totalMultiplier)
@@ -1393,16 +1315,18 @@ end
 -- ENHANCED SCORE DISPLAY
 -- ============================================================================
 
--- Render the main score box with dynamic states
-local function renderMainScoreBox(baseX, baseY)
-    local scoreWidth = 630
-    local scoreHeight = 80
-    local timerWidth = 120
-    local gap = 10
+-- Render the main score section with side-by-side layout (redesigned)
+local function renderMainScoreSection(baseX, baseY)
+    -- New layout: main score container + side panel (timer + lives)
+    local scoreWidth = 480   -- Reduced from 630
+    local scoreHeight = 90   -- Slightly increased for better proportions
+    local sidePanelWidth = 140  -- Timer and lives panel
+    local panelGap = 12     -- Gap between score and side panel
 
     -- Add shake effect if active
     local shakeX = UIState.shakeTimer > 0 and UIState.shakeOffset or 0
 
+    -- === MAIN SCORE CONTAINER ===
     -- Determine colors based on current state
     local fillColor = UI_COLORS.WHITE
     local textColor = UI_COLORS.BLACK
@@ -1423,111 +1347,119 @@ local function renderMainScoreBox(baseX, baseY)
         glowIntensity = UIState.glowIntensity
     end
 
-    -- Draw score box with glow effect
+    -- Draw main score container
     if glowColor and glowIntensity > 0 then
         -- Animate border chase effect
         UIState.borderPhase = UIState.borderPhase + 0.02
         if UIState.borderPhase > 1 then UIState.borderPhase = 0 end
 
         local chaseColor = getBorderChaseColor(glowColor, UIState.borderPhase, glowIntensity)
-        drawSkewedRectWithGlow(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, chaseColor, glowIntensity)
+        ui.drawRectFilled(vec2(baseX + shakeX, baseY), vec2(baseX + scoreWidth + shakeX, baseY + scoreHeight), fillColor, 16)
+        ui.drawRect(vec2(baseX + shakeX, baseY), vec2(baseX + scoreWidth + shakeX, baseY + scoreHeight), chaseColor, 16, 3)
     else
-        drawSkewedRect(baseX + shakeX, baseY, scoreWidth, scoreHeight, fillColor, UI_COLORS.BORDER_DARK, 2)
+        ui.drawRectFilled(vec2(baseX + shakeX, baseY), vec2(baseX + scoreWidth + shakeX, baseY + scoreHeight), fillColor, 16)
+        ui.drawRect(vec2(baseX + shakeX, baseY), vec2(baseX + scoreWidth + shakeX, baseY + scoreHeight), UI_COLORS.BORDER_DARK, 16, 2)
     end
 
-    -- Draw score text
-    local scoreText = UIState.showingAlert and UIState.alertMessage or
-                     string.format('%s PTS', formatNumber(GameState.currentScore))
-
-    local centerX = baseX + scoreWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
+    -- Draw score text (centered properly)
+    local scoreText = formatNumber(GameState.currentScore)
+    local centerX = baseX + scoreWidth * 0.5 + shakeX
     local centerY = baseY + scoreHeight * 0.5
 
-    ui.pushFont(ui.Font.Huge)  -- Use Huge font for large score text (28px equivalent)
-
-    local estimatedWidth = string.len(scoreText) * 28 * 0.6
-    local estimatedHeight = 28
-    ui.setCursor(vec2(centerX - estimatedWidth * 0.5, centerY - estimatedHeight * 0.5))
+    ui.pushFont(ui.Font.Huge)
+    local estimatedWidth = string.len(scoreText) * 24 * 0.6  -- Better text size estimation
+    ui.setCursor(vec2(centerX - estimatedWidth * 0.5, centerY - 20))
     ui.textColored(scoreText, textColor)
-
     ui.popFont()
 
-    -- Draw timer box
-    local timerX = baseX + scoreWidth + gap
-    drawSkewedRect(timerX + shakeX, baseY, timerWidth, scoreHeight, UI_COLORS.BLACK, UI_COLORS.BORDER_DARK, 2)
+    -- Draw "POINTS" subtitle
+    ui.pushFont(ui.Font.Main)
+    local subtitleText = "POINTS"
+    local subtitleWidth = string.len(subtitleText) * 12 * 0.6
+    ui.setCursor(vec2(centerX - subtitleWidth * 0.5, centerY + 8))
+    ui.textColored(subtitleText, rgbm(textColor.r * 0.6, textColor.g * 0.6, textColor.b * 0.6, textColor.mult))
+    ui.popFont()
 
-    -- Timer text
-    local minutes = math.floor(GameState.timePassed / 60)
-    local seconds = math.floor(GameState.timePassed % 60)
+    -- === SIDE PANEL ===
+    local sidePanelX = baseX + scoreWidth + panelGap
+    renderSidePanel(sidePanelX, baseY, sidePanelWidth, scoreHeight, shakeX)
+end
+
+-- Render the side panel with timer and lives (new layout)
+local function renderSidePanel(baseX, baseY, panelWidth, totalHeight, shakeX)
+    local timerHeight = 50
+    local livesHeight = 35
+    local gap = 5
+
+    -- === TIMER CARD ===
+    local timerY = baseY
+    ui.drawRectFilled(vec2(baseX + shakeX, timerY), vec2(baseX + panelWidth + shakeX, timerY + timerHeight),
+                     rgbm(0, 0, 0, 0.3), 12)
+    ui.drawRect(vec2(baseX + shakeX, timerY), vec2(baseX + panelWidth + shakeX, timerY + timerHeight),
+               UI_COLORS.BORDER_DARK, 12, 1)
+
+    -- Timer text (show run timer, not global timer)
+    local minutes = math.floor(GameState.runTimer / 60)
+    local seconds = math.floor(GameState.runTimer % 60)
     local timerText = string.format('%02d:%02d', minutes, seconds)
 
-    local timerCenterX = timerX + timerWidth * 0.5 + scoreHeight * 0.27 * 0.5 + shakeX
-    local timerCenterY = baseY + scoreHeight * 0.5
+    local timerCenterX = baseX + panelWidth * 0.5 + shakeX
+    local timerCenterY = timerY + timerHeight * 0.5
 
-    ui.pushFont(ui.Font.Title)  -- Use Title font for timer text (18px equivalent)
-
-    local estimatedWidth = string.len(timerText) * 18 * 0.6
-    local estimatedHeight = 18
-    ui.setCursor(vec2(timerCenterX - estimatedWidth * 0.5, timerCenterY - estimatedHeight * 0.5))
-    ui.textColored(timerText, UI_COLORS.WHITE)
-
+    ui.pushFont(ui.Font.Title)
+    local timerWidth = string.len(timerText) * 16 * 0.6
+    ui.setCursor(vec2(timerCenterX - timerWidth * 0.5, timerCenterY - 12))
+    ui.textColored(timerText, UI_COLORS.GREEN)
     ui.popFont()
+
+    -- Timer label
+    ui.pushFont(ui.Font.Main)
+    local labelText = "ELAPSED"
+    local labelWidth = string.len(labelText) * 10 * 0.6
+    ui.setCursor(vec2(timerCenterX - labelWidth * 0.5, timerCenterY + 8))
+    ui.textColored(labelText, rgbm(1, 1, 1, 0.6))
+    ui.popFont()
+
+    -- === LIVES CARD ===
+    local livesY = timerY + timerHeight + gap
+    ui.drawRectFilled(vec2(baseX + shakeX, livesY), vec2(baseX + panelWidth + shakeX, livesY + livesHeight),
+                     rgbm(0, 0, 0, 0.3), 12)
+    ui.drawRect(vec2(baseX + shakeX, livesY), vec2(baseX + panelWidth + shakeX, livesY + livesHeight),
+               UI_COLORS.BORDER_DARK, 12, 1)
+
+    -- Lives label
+    ui.pushFont(ui.Font.Main)
+    local livesLabelText = "LIVES"
+    local livesLabelWidth = string.len(livesLabelText) * 10 * 0.6
+    ui.setCursor(vec2(timerCenterX - livesLabelWidth * 0.5, livesY + 5))
+    ui.textColored(livesLabelText, rgbm(1, 1, 1, 0.6))
+    ui.popFont()
+
+    -- Lives dots
+    local dotSize = 8
+    local dotSpacing = 12
+    local totalDotsWidth = (CONFIG.LIVES_COUNT * dotSize) + ((CONFIG.LIVES_COUNT - 1) * (dotSpacing - dotSize))
+    local startX = timerCenterX - totalDotsWidth * 0.5
+
+    for i = 1, CONFIG.LIVES_COUNT do
+        local dotX = startX + (i - 1) * dotSpacing
+        local dotY = livesY + 20
+        local dotColor = i <= GameState.lives and UI_COLORS.GREEN or UI_COLORS.RED
+
+        ui.drawCircleFilled(vec2(dotX + dotSize * 0.5 + shakeX, dotY + dotSize * 0.5), dotSize * 0.5, dotColor, 8)
+    end
 end
 
 -- ============================================================================
 -- VISUAL STATE MANAGEMENT SYSTEM
 -- ============================================================================
 
--- Trigger visual alert with particles and effects
-local function triggerVisualAlert(alertType, message, duration)
-    UIState.currentState = alertType
-    UIState.showingAlert = true
-    UIState.alertMessage = message
-    UIState.alertTimer = duration or 2.5
-    UIState.glowIntensity = 1.0
-    UIState.borderPhase = 0
-
-    -- Create particles based on alert type
-    local particleColor = UI_COLORS.WHITE
-    local particleType = 'standard'
-    local particleCount = 30
-
-    if alertType == 'collision' then
-        particleColor = UI_COLORS.COLLISION_BG
-        particleType = 'standard'
-        particleCount = 35
-    elseif alertType == 'crash' then
-        particleColor = UI_COLORS.CRASH_BG
-        particleType = 'enhanced'
-        particleCount = 40
-    elseif alertType == 'new_pb' then
-        particleColor = UI_COLORS.GLOW_CYAN
-        particleType = 'new_pb'
-        particleCount = 60
-    end
-
-    -- Emit particles from score box center
-    local scoreBoxX = GameState.uiPosition.x + 6 -- Account for margin
-    local scoreBoxY = GameState.uiPosition.y + 86 -- Below stat boxes
-    local centerX = scoreBoxX + 315 -- Center of 630px box
-    local centerY = scoreBoxY + 40  -- Center of 80px box
-
-    for i = 1, particleCount do
-        createParticle(centerX, centerY, particleColor, particleType)
-    end
-
-    -- Trigger shake effect for collisions
-    if alertType == 'collision' or alertType == 'crash' then
-        UIState.shakeTimer = 0.4
-    end
-
-    ac.log(string.format('Visual alert triggered: %s - %s', alertType, message))
-end
+-- Visual alert system removed for cleaner UI
 
 -- Update visual state animations
 local function updateVisualState(dt)
     -- Update timers
     UIState.glowTimer = UIState.glowTimer + dt
-    UIState.particleTimer = UIState.particleTimer + dt
 
     -- Update alert state
     if UIState.showingAlert then
@@ -1574,8 +1506,7 @@ local function updateVisualState(dt)
         end
     end
 
-    -- Update particles
-    updateParticles(dt)
+    -- Particle system removed
 end
 
 -- Trigger score pop animation
@@ -1593,30 +1524,7 @@ local function triggerScoreRoll(newScore)
     end
 end
 
--- Check for milestone alerts (50%, 75% to PB)
-local function checkMilestoneAlerts()
-    if GameState.personalBest > 0 and GameState.runState == 'active' then
-        local percent = GameState.currentScore / GameState.personalBest
-
-        -- 50% milestone
-        if percent >= 0.5 and percent < 0.55 and not GameState.milestone50Shown then
-            GameState.milestone50Shown = true
-            triggerVisualAlert('normal', '50% TO PB', 2.0)
-            UIState.currentState = 'normal'
-            UIState.glowIntensity = 0.8
-            UIState.glowTimer = 0
-        end
-
-        -- 75% milestone
-        if percent >= 0.75 and percent < 0.8 and not GameState.milestone75Shown then
-            GameState.milestone75Shown = true
-            triggerVisualAlert('normal', '75% TO PB', 2.0)
-            UIState.currentState = 'normal'
-            UIState.glowIntensity = 0.8
-            UIState.glowTimer = 0
-        end
-    end
-end
+-- Milestone alerts removed for cleaner UI
 
 -- Reset milestone flags for new runs
 local function resetMilestoneFlags()
@@ -1658,8 +1566,7 @@ function script.drawUI()
     -- Render notifications
     renderNotifications()
 
-    -- Render particles
-    renderParticles()
+    -- Particle rendering removed
 
     -- Speed warning (subtle corner warning)
     if speedWarning > 0.1 then
@@ -1835,16 +1742,15 @@ function renderCurrentScoreUI(player, speedRatio)
     -- Update visual state animations
     updateVisualState(ac.getDeltaT())
 
-    -- Check for milestone alerts
-    checkMilestoneAlerts()
+    -- Milestone alerts removed
 
     -- Handle drag and drop functionality
     local mousePos = ui.mousePos()
     local isMouseDown = ui.mouseDown(ui.MouseButton.Left)
 
-    -- Define UI bounds for drag detection
-    local uiWidth = 950
-    local uiHeight = 166 -- 70 (stat boxes) + 16 (gap) + 80 (score box)
+    -- Define UI bounds for drag detection (updated for new compact layout)
+    local uiWidth = 640  -- Reduced from 950 (480 score + 12 gap + 140 side panel + 8 padding)
+    local uiHeight = 155 -- Reduced from 166 (55 stat boxes + 10 gap + 90 score section)
     local uiBounds = {
         x1 = GameState.uiPosition.x,
         y1 = GameState.uiPosition.y,
@@ -1866,17 +1772,16 @@ function renderCurrentScoreUI(player, speedRatio)
         GameState.uiPosition = vec2(mousePos.x - GameState.dragOffset.x, mousePos.y - GameState.dragOffset.y)
     end
 
-    -- Render the enhanced UI
+    -- Render the enhanced UI (new compact layout)
     ui.pushClipRect(vec2(0, 0), ui.windowSize(), false)
 
-    -- Render stat boxes row
-    renderStatBoxesRow(GameState.uiPosition.x + 6, GameState.uiPosition.y)
+    -- Render stat boxes row (smaller and more compact)
+    renderStatBoxesRow(GameState.uiPosition.x + 4, GameState.uiPosition.y)
 
-    -- Render main score display
-    renderMainScoreBox(GameState.uiPosition.x + 6, GameState.uiPosition.y + 86)
+    -- Render main score section with side panel (closer to stat boxes)
+    renderMainScoreSection(GameState.uiPosition.x + 4, GameState.uiPosition.y + 65)
 
-    -- Render particles on top
-    renderParticles()
+    -- Particle rendering removed
 
     ui.popClipRect()
 end
@@ -1892,7 +1797,7 @@ function renderComboCounter(label, value, color, size)
 
     -- Label
     ui.setCursor(pos + vec2(10, 8))
-    ui.pushFont(ui.Font.Small)
+    ui.pushFont(ui.Font.Main)
     ui.textColored(label, color)
     ui.popFont()
 
@@ -1943,7 +1848,7 @@ function renderPersonalBestUI()
 
     ui.dummy(vec2(0, 5))
 
-    ui.pushFont(ui.Font.Small)
+    ui.pushFont(ui.Font.Main)
     ui.textColored(string.format('Overtakes: %d', GameState.stats.totalOvertakes), colorLight)
     ui.textColored(string.format('Near Misses: %d', GameState.stats.totalNearMisses), colorLight)
     ui.textColored(string.format('Collisions: %d', GameState.stats.totalCollisions), colorLight)
@@ -2033,7 +1938,7 @@ function drawSpeedMeter(pos, ratio, accentColor, darkColor)
 
     -- Speed text
     ui.setCursor(pos + vec2(0, height + 5))
-    ui.pushFont(ui.Font.Small)
+    ui.pushFont(ui.Font.Main)
     local player = ac.getCarState(1)
     local currentSpeed = (player and player.speedKmh) and player.speedKmh or 0
     ui.text(string.format('%.0f km/h (min: %d)', currentSpeed, CONFIG.REQUIRED_SPEED))
@@ -2085,19 +1990,7 @@ function renderNotifications()
     end
 end
 
-function renderParticles()
-    for _, particle in ipairs(GameState.particles) do
-        if particle.color.mult > 0.01 then
-            local size = 3
-            ui.drawRectFilled(
-                particle.pos - vec2(size, size),
-                particle.pos + vec2(size, size),
-                particle.color,
-                1
-            )
-        end
-    end
-end
+-- Particle rendering function removed
 
 -- Comprehensive debug panel
 function renderDebugPanel()
@@ -2114,7 +2007,7 @@ function renderDebugPanel()
 
     ui.dummy(vec2(0, 10))
 
-    ui.pushFont(ui.Font.Small)
+    ui.pushFont(ui.Font.Main)
 
     -- Core State
     ui.textColored('=== CORE STATE ===', rgbm(0.8, 0.8, 1, 1))
@@ -2188,7 +2081,6 @@ function renderDebugPanel()
     ui.textColored('=== UI STATE ===', rgbm(1, 1, 0.8, 1))
     ui.text(string.format('Cars Tracked: %d', #GameState.carsState))
     ui.text(string.format('Notifications: %d', #GameState.notifications))
-    ui.text(string.format('Particles: %d', #GameState.particles))
     ui.text(string.format('Overlays: %d', #GameState.overlayAnimations))
     ui.text(string.format('Lanes Driven: %d', #GameState.lanesDriven))
 
@@ -2217,7 +2109,7 @@ function renderSpeedWarning(intensity)
     ui.pushFont(ui.Font.Main)
     ui.textColored('SPEED WARNING', rgbm(1, 1, 1, warningAlpha))
     ui.setCursor(warningPos + vec2(10, 35))
-    ui.pushFont(ui.Font.Small)
+    ui.pushFont(ui.Font.Main)
     ui.textColored(string.format('Min: %d km/h', CONFIG.REQUIRED_SPEED), rgbm(1, 0.8, 0.8, warningAlpha))
     ui.popFont()
     ui.popFont()
@@ -2304,6 +2196,11 @@ local function resetSession()
     GameState.milestonesReached = {}
     GameState.stats.sessionStartTime = GameState.timePassed
 
+    -- Reset run timer when session resets
+    GameState.runTimer = 0
+    GameState.runTimerActive = false
+    GameState.runState = 'not_started'
+
     addNotification('Session Reset', 'info')
 end
 
@@ -2312,14 +2209,13 @@ local function renderDebugInfo()
     if not GameState.debugMode then return end
 
     ui.beginTransparentWindow('debug', GameState.uiPosition + vec2(420, 0), vec2(300, 200), true)
-    ui.pushFont(ui.Font.Small)
+    ui.pushFont(ui.Font.Main)
 
     ui.text(string.format('Combo: %.2f', GameState.comboMultiplier))
     ui.text(string.format('Speed Mult: %.2f', calculateSpeedMultiplier(ac.getCarState(1).speedKmh)))
     ui.text(string.format('Proximity Mult: %.2f', calculateProximityBonus(ac.getCarState(1).position)))
     ui.text(string.format('Lanes Driven: %d', #GameState.lanesDriven))
     ui.text(string.format('Cars Tracked: %d', #GameState.carsState))
-    ui.text(string.format('Particles: %d', #GameState.particles))
     ui.text(string.format('Notifications: %d', #GameState.notifications))
 
     ui.popFont()
@@ -2361,34 +2257,7 @@ function updateCarTrackingOptimized(dt, player)
             if drivingAlong then
                 state.drivingAlong = true
 
-                -- Enhanced overtaking detection
-                if not state.overtaken and not state.collided then
-                    local posDir = (car.position - player.position):normalize()
-                    local posDot = math.dot(posDir, car.look)
-                    state.maxPosDot = math.max(state.maxPosDot, posDot)
-
-                    if posDot < -0.5 and state.maxPosDot > 0.5 then
-                        -- Successful overtake
-                        local points = addScore(10, player)
-                        GameState.stats.totalOvertakes = GameState.stats.totalOvertakes + 1
-
-                        addNotification(string.format('+%d pts - Overtake! (%d total)', points, GameState.stats.totalOvertakes), 'success')
-                        playSound(SOUNDS.OVERTAKE)
-
-                        state.overtaken = true
-
-                        -- Near miss bonus
-                        if distance < CONFIG.NEAR_MISS_DISTANCE then
-                            local bonusPoints = addScore(5, player)
-                            GameState.stats.totalNearMisses = GameState.stats.totalNearMisses + 1
-                            addNotification(string.format('+%d pts - Near Miss!', bonusPoints), 'success')
-                            playSound(SOUNDS.NEAR_MISS)
-                        end
-
-                        -- Check combo milestones
-                        checkComboMilestones()
-                    end
-                end
+                -- Overtake detection removed - handled by main system to prevent duplicates
             else
                 state.drivingAlong = false
             end
@@ -2407,91 +2276,7 @@ function updateCarTrackingOptimized(dt, player)
     updateStatistics()
 end
 
--- Replace the original updateCarTracking function with the optimized version
-updateCarTracking = updateCarTrackingOptimized
-
--- Remove duplicate collision detection from the original function
-local function updateCarTrackingFixed(dt, player)
-    local sim = ac.getSim()
-
-    -- Ensure we have enough car state slots
-    while sim.carsCount > #GameState.carsState do
-        GameState.carsState[#GameState.carsState + 1] = {
-            overtaken = false,
-            collided = false,
-            drivingAlong = true,
-            nearMiss = false,
-            maxPosDot = -1
-        }
-    end
-
-    -- Single collision check here - no duplicates
-    if player.collidedWith > 0 and not GameState.collisionProcessed then
-        GameState.collisionProcessed = true
-        GameState.stats.totalCollisions = GameState.stats.totalCollisions + 1
-        handleCollision()
-        return
-    elseif player.collidedWith == 0 then
-        GameState.collisionProcessed = false
-    end
-
-    -- Track other cars for overtaking
-    for i = 2, sim.carsCount do
-        local car = ac.getCarState(i)
-        local state = GameState.carsState[i]
-
-        if car and car.position:closerToThan(player.position, CONFIG.PROXIMITY_BONUS_DISTANCE) then
-            local drivingAlong = math.dot(car.look, player.look) > 0.2
-
-            if drivingAlong then
-                state.drivingAlong = true
-
-                -- Check for overtaking
-                if not state.overtaken and not state.collided then
-                    local posDir = (car.position - player.position):normalize()
-                    local posDot = math.dot(posDir, car.look)
-                    state.maxPosDot = math.max(state.maxPosDot, posDot)
-
-                    if posDot < -0.5 and state.maxPosDot > 0.5 then
-                        -- Successful overtake
-                        local points = addScore(10, player)
-                        GameState.stats.totalOvertakes = GameState.stats.totalOvertakes + 1
-
-                        addNotification(string.format('+%d pts - Overtake! (%d total)', points, GameState.stats.totalOvertakes), 'success')
-                        playSound(SOUNDS.OVERTAKE)
-
-                        state.overtaken = true
-
-                        -- Near miss bonus
-                        if car.position:closerToThan(player.position, CONFIG.NEAR_MISS_DISTANCE) then
-                            local bonusPoints = addScore(5, player)
-                            GameState.stats.totalNearMisses = GameState.stats.totalNearMisses + 1
-                            addNotification(string.format('+%d pts - Near Miss!', bonusPoints), 'success')
-                            playSound(SOUNDS.NEAR_MISS)
-                        end
-
-                        -- Check combo milestones
-                        checkComboMilestones()
-                    end
-                end
-            else
-                state.drivingAlong = false
-            end
-        else
-            -- Reset state when car is far away
-            state.maxPosDot = -1
-            state.overtaken = false
-            state.collided = false
-            state.drivingAlong = true
-            state.nearMiss = false
-        end
-    end
-
-    updateStatistics()
-end
-
--- Use the fixed version
-updateCarTracking = updateCarTrackingFixed
+-- Duplicate overtake detection functions removed - using original robust system only
 
 -- ============================================================================
 -- COMPREHENSIVE SETUP DOCUMENTATION
@@ -2548,8 +2333,8 @@ updateCarTracking = updateCarTrackingFixed
 
     FEATURES:
     - Personal best tracking (persistent across sessions)
-    - Smooth animations and particle effects
-    - Combo milestone celebrations
+    - Clean, non-intrusive UI design
+    - Essential visual feedback for important events
     - Real-time statistics tracking
     - Multiplayer-safe state management
     - Performance optimized for large servers
@@ -2574,7 +2359,7 @@ updateCarTracking = updateCarTrackingFixed
 
     VERSION HISTORY:
     v2.0 - Complete rewrite with advanced features
-    - Enhanced UI with animations and particles
+    - Clean, non-intrusive UI design
     - Robust multiplayer state management
     - Performance optimizations
     - Comprehensive documentation
@@ -2596,6 +2381,8 @@ local function ensureGameStateIntegrity()
     GameState.speedMultiplier = GameState.speedMultiplier or 1.0
     GameState.proximityBonus = GameState.proximityBonus or 1.0
     GameState.timePassed = GameState.timePassed or 0
+    GameState.runTimer = GameState.runTimer or 0
+    GameState.runTimerActive = GameState.runTimerActive or false
     GameState.lastSpeedWarning = GameState.lastSpeedWarning or 0
     GameState.dangerousSlowTimer = GameState.dangerousSlowTimer or 0
     GameState.comboColorHue = GameState.comboColorHue or 0
@@ -2612,7 +2399,6 @@ local function ensureGameStateIntegrity()
     -- Ensure table values are never nil
     GameState.lanesDriven = GameState.lanesDriven or {}
     GameState.notifications = GameState.notifications or {}
-    GameState.particles = GameState.particles or {}
     GameState.overlayAnimations = GameState.overlayAnimations or {}
     GameState.carsState = GameState.carsState or {}
     GameState.mediaPlayers = GameState.mediaPlayers or {}
