@@ -145,7 +145,7 @@ local function hsv2rgb(h, s, v)
     local p = v * (1 - s)
     local q = v * (1 - f * s)
     local t = v * (1 - (1 - f) * s)
-    
+
     i = i % 6
     if i == 0 then r, g, b = v, t, p
     elseif i == 1 then r, g, b = q, v, p
@@ -154,8 +154,23 @@ local function hsv2rgb(h, s, v)
     elseif i == 4 then r, g, b = t, p, v
     elseif i == 5 then r, g, b = v, p, q
     end
-    
+
     return rgbm(r, g, b, 1)
+end
+
+-- Format numbers with commas for better readability
+local function formatNumber(num)
+    if not num or type(num) ~= 'number' then
+        return '0'
+    end
+
+    local formatted = tostring(math.floor(num))
+    local k
+    while true do
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+        if k == 0 then break end
+    end
+    return formatted
 end
 
 -- ============================================================================
