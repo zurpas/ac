@@ -1281,7 +1281,7 @@ local function drawSkewedText(x, y, width, height, text, color, fontSize)
     if fontSize then ui.pushStyleVar(ui.StyleVar.FontSize, fontSize) end
 
     local textSize = ui.calcTextSize(text)
-    ui.setCursorPos(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
+    ui.setCursor(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
     ui.textColored(text, color)
 
     if fontSize then ui.popStyleVar() end
@@ -1320,12 +1320,12 @@ local function renderStatBox(x, y, width, height, topText, bottomText, isTotal)
 
     -- Top text (multiplier value)
     local topSize = ui.calcTextSize(topText)
-    ui.setCursorPos(vec2(centerX - topSize.x * 0.5, y + height * 0.25))
+    ui.setCursor(vec2(centerX - topSize.x * 0.5, y + height * 0.25))
     ui.textColored(topText, textColor)
 
     -- Bottom text (label)
     local bottomSize = ui.calcTextSize(bottomText)
-    ui.setCursorPos(vec2(centerX - bottomSize.x * 0.5, y + height * 0.65))
+    ui.setCursor(vec2(centerX - bottomSize.x * 0.5, y + height * 0.65))
     ui.textColored(bottomText, textColor)
 
     ui.popFont()
@@ -1424,7 +1424,7 @@ local function renderMainScoreBox(baseX, baseY)
     ui.pushStyleVar(ui.StyleVar.FontSize, 28)
 
     local textSize = ui.calcTextSize(scoreText)
-    ui.setCursorPos(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
+    ui.setCursor(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
     ui.textColored(scoreText, textColor)
 
     ui.popStyleVar()
@@ -1446,7 +1446,7 @@ local function renderMainScoreBox(baseX, baseY)
     ui.pushStyleVar(ui.StyleVar.FontSize, 18)
 
     local timerSize = ui.calcTextSize(timerText)
-    ui.setCursorPos(vec2(timerCenterX - timerSize.x * 0.5, timerCenterY - timerSize.y * 0.5))
+    ui.setCursor(vec2(timerCenterX - timerSize.x * 0.5, timerCenterY - timerSize.y * 0.5))
     ui.textColored(timerText, UI_COLORS.WHITE)
 
     ui.popStyleVar()
@@ -1809,6 +1809,7 @@ function updateRealTimeCombos(dt, player)
         GameState.stats.bestCombo = GameState.comboMultiplier
     end
 end
+end
 
 -- Enhanced Current Score UI with HTML-inspired design
 function renderCurrentScoreUI(player, speedRatio)
@@ -1820,7 +1821,7 @@ function renderCurrentScoreUI(player, speedRatio)
 
     -- Handle drag and drop functionality
     local mousePos = ui.mousePos()
-    local isMouseDown = ui.isMouseDown(0)
+    local isMouseDown = ui.mouseDown(ui.MouseButton.Left)
 
     -- Define UI bounds for drag detection
     local uiWidth = 950
@@ -1971,7 +1972,7 @@ function renderOverlayAnimations()
 
             -- Text
             ui.pushFont(ui.Font.Title)
-            local textSize = ui.measureText(overlay.text)
+            local textSize = ui.calcTextSize(overlay.text)
             local textPos = overlayPos - textSize * 0.5
 
             ui.setCursor(textPos)
@@ -2039,7 +2040,7 @@ function renderNotifications()
             -- Scale animation
             ui.pushStyleVar(ui.StyleVar.Alpha, notif.alpha)
 
-            local textSize = ui.measureText(notif.text)
+            local textSize = ui.calcTextSize(notif.text)
             local padding = vec2(10, 5)
             ui.drawRectFilled(pos - padding, pos + textSize + padding, bgColor, 3)
 
@@ -2167,7 +2168,7 @@ function renderDebugPanel()
     ui.text(string.format('Notifications: %d', #GameState.notifications))
     ui.text(string.format('Particles: %d', #GameState.particles))
     ui.text(string.format('Overlays: %d', #GameState.overlayAnimations))
-    ui.text(string.format('Lanes Driven: %d', table.getn(GameState.lanesDriven)))
+    ui.text(string.format('Lanes Driven: %d', #GameState.lanesDriven))
 
     ui.popFont()
     ui.endOutline(rgbm(0, 0, 0, 0.8))
@@ -2294,7 +2295,7 @@ local function renderDebugInfo()
     ui.text(string.format('Combo: %.2f', GameState.comboMultiplier))
     ui.text(string.format('Speed Mult: %.2f', calculateSpeedMultiplier(ac.getCarState(1).speedKmh)))
     ui.text(string.format('Proximity Mult: %.2f', calculateProximityBonus(ac.getCarState(1).position)))
-    ui.text(string.format('Lanes Driven: %d', table.getn(GameState.lanesDriven)))
+    ui.text(string.format('Lanes Driven: %d', #GameState.lanesDriven))
     ui.text(string.format('Cars Tracked: %d', #GameState.carsState))
     ui.text(string.format('Particles: %d', #GameState.particles))
     ui.text(string.format('Notifications: %d', #GameState.notifications))
