@@ -1280,8 +1280,10 @@ local function drawSkewedText(x, y, width, height, text, color, fontSize)
     ui.pushFont(ui.Font.Main)
     if fontSize then ui.pushStyleVar(ui.StyleVar.FontSize, fontSize) end
 
-    local textSize = ui.calcTextSize(text)
-    ui.setCursor(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
+    -- Estimate text size for centering (since ui.calcTextSize doesn't exist in CSP)
+    local estimatedWidth = string.len(text) * (fontSize or 14) * 0.6
+    local estimatedHeight = fontSize or 14
+    ui.setCursor(vec2(centerX - estimatedWidth * 0.5, centerY - estimatedHeight * 0.5))
     ui.textColored(text, color)
 
     if fontSize then ui.popStyleVar() end
@@ -1319,13 +1321,13 @@ local function renderStatBox(x, y, width, height, topText, bottomText, isTotal)
     ui.pushFont(ui.Font.Main)
 
     -- Top text (multiplier value)
-    local topSize = ui.calcTextSize(topText)
-    ui.setCursor(vec2(centerX - topSize.x * 0.5, y + height * 0.25))
+    local topEstimatedWidth = string.len(topText) * 12 * 0.6
+    ui.setCursor(vec2(centerX - topEstimatedWidth * 0.5, y + height * 0.25))
     ui.textColored(topText, textColor)
 
     -- Bottom text (label)
-    local bottomSize = ui.calcTextSize(bottomText)
-    ui.setCursor(vec2(centerX - bottomSize.x * 0.5, y + height * 0.65))
+    local bottomEstimatedWidth = string.len(bottomText) * 10 * 0.6
+    ui.setCursor(vec2(centerX - bottomEstimatedWidth * 0.5, y + height * 0.65))
     ui.textColored(bottomText, textColor)
 
     ui.popFont()
@@ -1423,8 +1425,9 @@ local function renderMainScoreBox(baseX, baseY)
     ui.pushFont(ui.Font.Main)
     ui.pushStyleVar(ui.StyleVar.FontSize, 28)
 
-    local textSize = ui.calcTextSize(scoreText)
-    ui.setCursor(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
+    local estimatedWidth = string.len(scoreText) * 28 * 0.6
+    local estimatedHeight = 28
+    ui.setCursor(vec2(centerX - estimatedWidth * 0.5, centerY - estimatedHeight * 0.5))
     ui.textColored(scoreText, textColor)
 
     ui.popStyleVar()
@@ -1445,8 +1448,9 @@ local function renderMainScoreBox(baseX, baseY)
     ui.pushFont(ui.Font.Main)
     ui.pushStyleVar(ui.StyleVar.FontSize, 18)
 
-    local timerSize = ui.calcTextSize(timerText)
-    ui.setCursor(vec2(timerCenterX - timerSize.x * 0.5, timerCenterY - timerSize.y * 0.5))
+    local estimatedWidth = string.len(timerText) * 18 * 0.6
+    local estimatedHeight = 18
+    ui.setCursor(vec2(timerCenterX - estimatedWidth * 0.5, timerCenterY - estimatedHeight * 0.5))
     ui.textColored(timerText, UI_COLORS.WHITE)
 
     ui.popStyleVar()
@@ -1971,8 +1975,9 @@ function renderOverlayAnimations()
 
             -- Text
             ui.pushFont(ui.Font.Title)
-            local textSize = ui.calcTextSize(overlay.text)
-            local textPos = overlayPos - textSize * 0.5
+            local estimatedWidth = string.len(overlay.text) * 16 * 0.6
+            local estimatedHeight = 16
+            local textPos = overlayPos - vec2(estimatedWidth * 0.5, estimatedHeight * 0.5)
 
             ui.setCursor(textPos)
             local textColor = overlay.color
@@ -2039,7 +2044,9 @@ function renderNotifications()
             -- Scale animation
             ui.pushStyleVar(ui.StyleVar.Alpha, notif.alpha)
 
-            local textSize = ui.calcTextSize(notif.text)
+            local estimatedWidth = string.len(notif.text) * 14 * 0.6
+            local estimatedHeight = 14
+            local textSize = vec2(estimatedWidth, estimatedHeight)
             local padding = vec2(10, 5)
             ui.drawRectFilled(pos - padding, pos + textSize + padding, bgColor, 3)
 
